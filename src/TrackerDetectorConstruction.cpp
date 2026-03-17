@@ -1,62 +1,84 @@
 // TrackerDetectorConstruction.cpp
 // Bridges the GeoModel tree into Geant4 via GeoModel2G4.
 
-#include "TrackerDetectorConstruction.h"
-#include "StrawTrackerBuilder.h"
-#include "TrackerSD.h"
-#include "MaterialManager.h"
-
-#include "GeoModel2G4/ExtParameterisedVolumeBuilder.h"
-#include "GeoModelKernel/GeoPhysVol.h"
 #include "G4PVPlacement.hh"
-
 #include "G4SDManager.hh"
 #include "G4LogicalVolumeStore.hh"
 #include "G4SystemOfUnits.hh"
+#include "G4Colour.hh"
+#include "G4VisAttributes.hh"
 
-// Global pointer to the SD so TrackerEventAction can reach it.
-TrackerSD* g_strawSD = nullptr;
+
+#include "GeoModel2G4/ExtParameterisedVolumeBuilder.h"
+#include "GeoModelKernel/GeoPhysVol.h"
+
+#include "TrackerDetectorConstruction.h"
+#include "StrawTrackerBuilder.h"
+#include "TrackerSD.h"
 
 TrackerDetectorConstruction::TrackerDetectorConstruction()
     : G4VUserDetectorConstruction()
 {}
 
 G4VPhysicalVolume* TrackerDetectorConstruction::Construct() {
-    // 1. Build geometry using GeoModel
     StrawTrackerBuilder builder;
     GeoPhysVol* geoWorld = builder.buildWorld();
 
-    // 2. Convert GeoModel tree → Geant4 volume tree
     ExtParameterisedVolumeBuilder g4Builder("StrawTracker");
-
     G4LogicalVolume* g4WorldLog = g4Builder.Build(geoWorld);
 
+    // ── Visibility attributes ─────────────────────────────────────────────
+    auto* lvStore = G4LogicalVolumeStore::GetInstance();
+    for (auto* lv : *lvStore) {
+        const G4String& name = lv->GetName();
+
+        if (name == "World") {
+            lv->SetVisAttributes(G4VisAttributes::GetInvisible());
+
+        } else if (name == "Station") {
+            auto* va = new G4VisAttributes(false); // invisible envelope
+            lv->SetVisAttributes(va);
+
+        } else if (name == "StrawLayer") {
+            auto* va = new G4VisAttributes(false); // invisible envelope
+            lv->SetVisAttributes(va);
+
+        } else if (name == "SubLayer_nominal" || name == "SubLayer_shifted") {
+            auto* va = new G4VisAttributes(false); // invisible envelope
+            lv->SetVisAttributes(va);
+
+        } else if (name == "StrawWall") {
+            auto* va = new G4VisAttributes(G4Colour(0.5, 0.5, 0.5, 0.3)); // grey, translucent
+            va->SetForceSolid(true);
+            lv->SetVisAttributes(va);
+
+        } else if (name == "StrawGas") {
+            auto* va = new G4VisAttributes(G4Colour(0.0, 0.8, 1.0, 0.4)); // cyan, translucent
+            va->SetForceSolid(true);
+            lv->SetVisAttributes(va);
+        }
+    }
+
     G4VPhysicalVolume* g4World = new G4PVPlacement(
-        nullptr,             // no rotation
-        G4ThreeVector(),     // at origin
-        g4WorldLog,
-        "World",
-        nullptr,             // no mother volume (this is the world)
-        false, 0, false);
+        nullptr, G4ThreeVector(), g4WorldLog,
+        "World", nullptr, false, 0, false);
 
     return g4World;
-
-
 }
+
 
 void TrackerDetectorConstruction::ConstructSDandField() {
     // Attach the sensitive detector to every logical volume named "StrawGas".
+    // This is called once per worker thread in MT mode; each worker gets its
+    // own TrackerSD instance, which is what we want.
     auto* sdManager = G4SDManager::GetSDMpointer();
 
     auto* sd = new TrackerSD("StrawTrackerSD");
     sdManager->AddNewDetector(sd);
-    g_strawSD = sd;
 
-    // Walk the logical volume store and attach SD to all "StrawGas" volumes.
     auto* lvStore = G4LogicalVolumeStore::GetInstance();
     for (auto* lv : *lvStore) {
-        if (lv->GetName() == "StrawGas") {
+        if (lv->GetName() == "StrawGas")
             lv->SetSensitiveDetector(sd);
-        }
     }
 }

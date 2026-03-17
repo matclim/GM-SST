@@ -16,7 +16,6 @@
 #include "G4TouchableHistory.hh"
 #include "G4VPhysicalVolume.hh"
 #include "G4SystemOfUnits.hh"
-#include "G4SDManager.hh"
 
 TrackerSD::TrackerSD(const G4String& name)
     : G4VSensitiveDetector(name)

@@ -25,7 +25,6 @@
 
 #include "GeoModelKernel/GeoPhysVol.h"
 #include "GeoModelKernel/GeoFullPhysVol.h"
-#include "GeoModelKernel/GeoDefinitions.h"
 #include <array>
 
 class StrawTrackerBuilder {

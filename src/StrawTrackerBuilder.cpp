@@ -39,9 +39,11 @@
 #include "GeoModelKernel/GeoDefinitions.h"
 #include "GeoModelKernel/GeoXF.h"  
 
+//G4 visualisations
+#include "G4VisAttributes.hh"
+#include "G4Colour.hh"
 
 // Standard transforms
-
 #include <cmath>
 #include <string>
 

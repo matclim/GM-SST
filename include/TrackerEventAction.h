@@ -1,6 +1,8 @@
 #pragma once
 // TrackerEventAction.h
 // Collects hits from the SD at end of event and fills the TTree.
+// The SD pointer is resolved lazily on the first event via G4SDManager,
+// so no explicit setSD() call is needed.
 
 #include "G4UserEventAction.hh"
 #include "TrackerHit.h"
@@ -17,15 +19,12 @@ public:
     void BeginOfEventAction(const G4Event*) override;
     void EndOfEventAction(const G4Event*)   override;
 
-    // Called by TrackerRunAction to bind branches.
+    // Called by TrackerRunAction::BeginOfRunAction (worker thread) to bind branches.
     void setTree(TTree* tree);
-
-    // Set the pointer to the SD (done after ConstructSDandField).
-    void setSD(TrackerSD* sd) { m_sd = sd; }
 
 private:
     TTree*     m_tree {nullptr};
-    TrackerSD* m_sd   {nullptr};
+    TrackerSD* m_sd   {nullptr};   // resolved lazily on first event
 
     // Branch buffers
     std::vector<int>    m_trackID, m_stationID, m_layerID, m_subLayerID, m_strawID;

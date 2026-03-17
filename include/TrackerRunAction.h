@@ -1,6 +1,8 @@
 #pragma once
 // TrackerRunAction.h
-// Opens / closes the ROOT output file and owns the TTree.
+// In Geant4 MT each worker thread gets its own TrackerRunAction instance
+// and writes to its own per-thread ROOT file. The master run action does
+// nothing with ROOT; a post-run hadd step merges the files if desired.
 
 #include "G4UserRunAction.hh"
 #include <string>
@@ -11,6 +13,7 @@ class TrackerEventAction;
 
 class TrackerRunAction : public G4UserRunAction {
 public:
+    // evtAction is nullptr on the master thread.
     TrackerRunAction(TrackerEventAction* evtAction,
                      const std::string& outFile = "StrawTracker_hits.root");
     ~TrackerRunAction() override = default;

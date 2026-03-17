@@ -58,9 +58,9 @@ set(SOURCES
     src/TrackerSD.cpp
     src/TrackerRunAction.cpp
     src/TrackerEventAction.cpp
-    src/TrackerPrimaryGeneratorAction.cpp
     src/TrackerActionInitialization.cpp
-  )
+    src/TrackerPrimaryGeneratorAction.cpp
+)
 
 # ── Executable ────────────────────────────────────────────────────────────────
 add_executable(run_StrawTracker exec/main.cpp ${SOURCES})
