@@ -1,0 +1,18 @@
+# straw_vis.mac  – default visualisation macro for StrawTracker
+/vis/open OGL 1200x800
+/vis/drawVolume
+
+/vis/scene/add/axes 0 0 0 500 mm
+
+/vis/viewer/set/viewpointThetaPhi 80 20
+/vis/viewer/set/lightsThetaPhi    45 45
+/vis/viewer/zoom 1.2
+
+/vis/scene/add/trajectories smooth
+/vis/scene/endOfEventAction accumulate 100
+
+/vis/modeling/trajectories/create/drawByCharge
+/vis/modeling/trajectories/drawByCharge-0/default/setDrawStepPts true
+/vis/modeling/trajectories/drawByCharge-0/default/setStepPtsSize 2
+
+/run/beamOn 0
