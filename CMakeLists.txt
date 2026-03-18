@@ -53,6 +53,7 @@ include(${ROOT_USE_FILE})
 # ── Sources ───────────────────────────────────────────────────────────────────
 set(SOURCES
     src/MaterialManager.cpp
+    src/MagneticFieldRegion.cpp
     src/StrawTrackerBuilder.cpp
     src/TrackerDetectorConstruction.cpp
     src/TrackerSD.cpp

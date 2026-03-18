@@ -46,7 +46,7 @@
 // Standard transforms
 #include <cmath>
 #include <string>
-
+#include <iostream>
 // ── Unit aliases ──────────────────────────────────────────────────────────────
 namespace GU = GeoModelKernelUnits;
 
@@ -60,7 +60,7 @@ static double stereoSign(int layerID) {
 // buildWorld
 // =============================================================================
 GeoPhysVol* StrawTrackerBuilder::buildWorld() {
-    auto& mm = MaterialManager::instance();
+    auto& Mm = MaterialManager::instance();
 
     // World box: large enough to contain all stations.
     // X: straw length + margin  → 4500 mm
@@ -72,7 +72,7 @@ GeoPhysVol* StrawTrackerBuilder::buildWorld() {
     const double worldZ = 7500.0  * GU::mm;   // half of 15000 mm span (centred at ~31000)
 
     auto* worldBox  = new GeoBox(worldX, worldY, worldZ);
-    auto* worldLog  = new GeoLogVol("World", worldBox, mm.Air());
+    auto* worldLog  = new GeoLogVol("World", worldBox, Mm.Air());
     auto* worldPhys = new GeoPhysVol(worldLog);
 
     // ── Place 4 stations ──────────────────────────────────────────────────────
@@ -108,7 +108,7 @@ GeoPhysVol* StrawTrackerBuilder::buildWorld() {
 // buildStation
 // =============================================================================
 GeoPhysVol* StrawTrackerBuilder::buildStation(int stationID) {
-    auto& mm = MaterialManager::instance();
+    auto& Mm = MaterialManager::instance();
 
     // Station envelope: just large enough to hold 4 straw layers.
     // Each layer has thickness = 2 sub-layers × 2×kStrawRadius = 4×kStrawRadius.
@@ -127,7 +127,7 @@ GeoPhysVol* StrawTrackerBuilder::buildStation(int stationID) {
     const double stHalfZ = 120.0 * GU::mm;
 
     auto* stationBox  = new GeoBox(stHalfX, stHalfY, stHalfZ);
-    auto* stationLog  = new GeoLogVol("Station", stationBox, mm.Air());
+    auto* stationLog  = new GeoLogVol("Station", stationBox, Mm.Air());
     auto* stationPhys = new GeoPhysVol(stationLog);
 
     // Layer z-positions inside station: stack them with 5 mm gap.
@@ -176,14 +176,14 @@ GeoPhysVol* StrawTrackerBuilder::buildLayer(int layerID, double /*stereoAngleDeg
     // The layer envelope is unrotated here; the stereo rotation is applied
     // by the parent station when placing this volume.
 
-    auto& mm = MaterialManager::instance();
+    auto& Mm = MaterialManager::instance();
 
     const double layHalfX = (kStrawLength / 2.0 + 10.0) * GU::mm;
     const double layHalfY = (kStationY    / 2.0 + 20.0) * GU::mm;
     const double layHalfZ = (2.0 * kStrawRadius + 1.0)  * GU::mm;
 
     auto* layerBox  = new GeoBox(layHalfX, layHalfY, layHalfZ);
-    auto* layerLog  = new GeoLogVol("StrawLayer", layerBox, mm.Air());
+    auto* layerLog  = new GeoLogVol("StrawLayer", layerBox, Mm.Air());
     auto* layerPhys = new GeoPhysVol(layerLog);
 
     const double dz0 = -kStrawRadius * GU::mm;  // sub-layer 0 z-offset
@@ -228,8 +228,8 @@ GeoPhysVol* StrawTrackerBuilder::buildSubLayer(bool shifted) {
     // where pitch = 2 * kStrawRadius.
     // The "shifted" flag moves the slab by half a pitch (handled by the parent
     // layer transform); the slab itself is always centred at y=0.
-
-    auto& mm = MaterialManager::instance();
+    std::cout << "buildSubLayer called!" << std::endl;
+    auto& Mm = MaterialManager::instance();
 
     const double pitch    = 2.0 * kStrawRadius;           // 20 mm
     const double slHalfX  = (kStrawLength / 2.0 + 5.0) * GU::mm;
@@ -238,21 +238,16 @@ GeoPhysVol* StrawTrackerBuilder::buildSubLayer(bool shifted) {
 
     const std::string name = shifted ? "SubLayer_shifted" : "SubLayer_nominal";
     auto* slBox  = new GeoBox(slHalfX, slHalfY, slHalfZ);
-    auto* slLog  = new GeoLogVol(name, slBox, mm.Air());
+    auto* slLog  = new GeoLogVol(name, slBox, Mm.Air());
     auto* slPhys = new GeoPhysVol(slLog);
 
-    // Build one canonical straw (reuse the same logical volume for all)
-    GeoPhysVol* strawPhys = buildStraw();
-
-    const double yStart = -(kNStraws - 1) * 0.5 * pitch;  // y of first straw centre
+    const double yStart = -(kNStraws - 1) * 0.5 * pitch;
 
     for (int iStraw = 0; iStraw < kNStraws; ++iStraw) {
         const double yStraw = (yStart + iStraw * pitch) * GU::mm;
 
         auto* nameTag = new GeoNameTag("Straw_" + std::to_string(iStraw));
         auto* idTag   = new GeoIdentifierTag(iStraw);
-        // Straws run along X; no rotation needed (GeoTube axis = Z in local frame,
-        // so we rotate 90° around Y to align the tube axis with X).
         auto* xf = new GeoTransform(
             GeoTrf::TranslateY3D(yStraw) * GeoTrf::RotateY3D(M_PI / 2.0)
         );
@@ -260,8 +255,8 @@ GeoPhysVol* StrawTrackerBuilder::buildSubLayer(bool shifted) {
         slPhys->add(nameTag);
         slPhys->add(idTag);
         slPhys->add(xf);
-        slPhys->add(strawPhys);
-    }
+        slPhys->add(buildStraw());   // fresh GeoPhysVol per straw
+    } 
 
     return slPhys;
 }
@@ -282,7 +277,7 @@ GeoPhysVol* StrawTrackerBuilder::buildStraw() {
     //
     // GeoTube axis is along local Z; the parent sub-layer rotates this to X.
 
-    auto& mm = MaterialManager::instance();
+    auto& Mm = MaterialManager::instance();
 
     const double rGas  = (kStrawRadius - kWallThick) * GU::mm;
     const double rWall = kStrawRadius                 * GU::mm;
@@ -290,18 +285,16 @@ GeoPhysVol* StrawTrackerBuilder::buildStraw() {
 
     // ── Outer (wall) tube ─────────────────────────────────────────────────────
     auto* wallTube = new GeoTube(rGas, rWall, half);
-    auto* wallLog  = new GeoLogVol("StrawWall", wallTube, mm.Mylar());
+    auto* wallLog  = new GeoLogVol("StrawWall", wallTube, Mm.Mylar());
     auto* wallPhys = new GeoPhysVol(wallLog);
 
     // ── Inner (gas) tube ──────────────────────────────────────────────────────
     auto* gasTube  = new GeoTube(0.0, rGas, half);
-    auto* gasLog   = new GeoLogVol("StrawGas", gasTube, mm.ArCO2());
+    auto* gasLog   = new GeoLogVol("StrawGas", gasTube, Mm.ArCO2());
     auto* gasPhys  = new GeoPhysVol(gasLog);
 
     // Place gas inside wall (both share the same axis, no transform needed)
-    auto* nameTag = new GeoNameTag("StrawGas");
-    wallPhys->add(nameTag);
-    wallPhys->add(new GeoTransform(GeoTrf::TranslateX3D(0)));  // identity
+    wallPhys->add(new GeoNameTag("StrawGas"));
     wallPhys->add(gasPhys);
 
     return wallPhys;

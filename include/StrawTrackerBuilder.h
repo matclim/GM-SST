@@ -50,7 +50,7 @@ public:
     static constexpr int kNStraws = static_cast<int>(kStationY / (2.0 * kStrawRadius)); // 300
 
     // Stereo angle magnitude (degrees)
-    static constexpr double kStereoAngle  = 2.3;
+    static constexpr double kStereoAngle  = 4.6;
 
     // Z positions of station centres (mm) — converted from cm
     static constexpr std::array<double,4> kStationZ = {26500., 29000., 34000., 35500.};

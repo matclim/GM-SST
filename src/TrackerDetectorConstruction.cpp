@@ -7,7 +7,7 @@
 #include "G4SystemOfUnits.hh"
 #include "G4Colour.hh"
 #include "G4VisAttributes.hh"
-
+#include "MagneticFieldRegion.h"
 
 #include "GeoModel2G4/ExtParameterisedVolumeBuilder.h"
 #include "GeoModelKernel/GeoPhysVol.h"
@@ -58,6 +58,10 @@ G4VPhysicalVolume* TrackerDetectorConstruction::Construct() {
             lv->SetVisAttributes(va);
         }
     }
+
+    constexpr double worldZOriginMM = 31000.;
+    MagneticFieldRegion::build(g4WorldLog, worldZOriginMM);
+
 
     G4VPhysicalVolume* g4World = new G4PVPlacement(
         nullptr, G4ThreeVector(), g4WorldLog,

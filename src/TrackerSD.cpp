@@ -31,6 +31,18 @@ G4bool TrackerSD::ProcessHits(G4Step* step, G4TouchableHistory*) {
 
     auto* touch = step->GetPreStepPoint()->GetTouchable();
 
+    static bool printed = false;
+    if (!printed) {
+        printed = true;
+        G4cout << "[TrackerSD] Touchable history depth: "
+               << touch->GetHistoryDepth() << G4endl;
+        for (int d = 0; d <= touch->GetHistoryDepth(); ++d) {
+            G4cout << "  depth " << d << ": "
+                   << touch->GetVolume(d)->GetName()
+                   << "  copyNo=" << touch->GetCopyNumber(d) << G4endl;
+        }
+    }
+
     // Decode copy numbers from the touchable history.
     // Depth 0 = StrawGas, 1 = StrawWall (straw copy number),
     // 2 = SubLayer, 3 = StrawLayer, 4 = Station
