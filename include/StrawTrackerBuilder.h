@@ -70,5 +70,5 @@ private:
     GeoPhysVol* buildSubLayer(bool shifted);
 
     /// Build a single straw (wall tube + gas tube).
-    GeoPhysVol* buildStraw();
+    GeoPhysVol* buildStraw(int uid);
 };

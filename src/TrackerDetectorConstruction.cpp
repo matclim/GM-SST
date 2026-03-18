@@ -47,12 +47,12 @@ G4VPhysicalVolume* TrackerDetectorConstruction::Construct() {
             auto* va = new G4VisAttributes(false); // invisible envelope
             lv->SetVisAttributes(va);
 
-        } else if (name == "StrawWall") {
+        } else if (name.substr(0, 9) == "StrawWall") {
             auto* va = new G4VisAttributes(G4Colour(0.5, 0.5, 0.5, 0.3)); // grey, translucent
             va->SetForceSolid(true);
             lv->SetVisAttributes(va);
 
-        } else if (name == "StrawGas") {
+        } else if (name.substr(0, 8) == "StrawGas") {
             auto* va = new G4VisAttributes(G4Colour(0.0, 0.8, 1.0, 0.4)); // cyan, translucent
             va->SetForceSolid(true);
             lv->SetVisAttributes(va);
@@ -82,7 +82,7 @@ void TrackerDetectorConstruction::ConstructSDandField() {
 
     auto* lvStore = G4LogicalVolumeStore::GetInstance();
     for (auto* lv : *lvStore) {
-        if (lv->GetName() == "StrawGas")
+        if (lv->GetName().substr(0, 8) == "StrawGas")
             lv->SetSensitiveDetector(sd);
     }
 }

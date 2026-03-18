@@ -229,6 +229,8 @@ GeoPhysVol* StrawTrackerBuilder::buildSubLayer(bool shifted) {
     // The "shifted" flag moves the slab by half a pitch (handled by the parent
     // layer transform); the slab itself is always centred at y=0.
     std::cout << "buildSubLayer called!" << std::endl;
+    
+    static int strawUID = 0;
     auto& Mm = MaterialManager::instance();
 
     const double pitch    = 2.0 * kStrawRadius;           // 20 mm
@@ -240,6 +242,7 @@ GeoPhysVol* StrawTrackerBuilder::buildSubLayer(bool shifted) {
     auto* slBox  = new GeoBox(slHalfX, slHalfY, slHalfZ);
     auto* slLog  = new GeoLogVol(name, slBox, Mm.Air());
     auto* slPhys = new GeoPhysVol(slLog);
+    slPhys->add(buildStraw(strawUID++));
 
     const double yStart = -(kNStraws - 1) * 0.5 * pitch;
 
@@ -255,7 +258,7 @@ GeoPhysVol* StrawTrackerBuilder::buildSubLayer(bool shifted) {
         slPhys->add(nameTag);
         slPhys->add(idTag);
         slPhys->add(xf);
-        slPhys->add(buildStraw());   // fresh GeoPhysVol per straw
+        slPhys->add(buildStraw(strawUID++));   // fresh GeoPhysVol per straw
     } 
 
     return slPhys;
@@ -264,7 +267,7 @@ GeoPhysVol* StrawTrackerBuilder::buildSubLayer(bool shifted) {
 // =============================================================================
 // buildStraw
 // =============================================================================
-GeoPhysVol* StrawTrackerBuilder::buildStraw() {
+GeoPhysVol* StrawTrackerBuilder::buildStraw(int uid) {
     // A straw is a coaxial pair of tubes:
     //   Outer tube (wall):  rMin = kStrawRadius - kWallThick,
     //                       rMax = kStrawRadius,
@@ -285,12 +288,12 @@ GeoPhysVol* StrawTrackerBuilder::buildStraw() {
 
     // ── Outer (wall) tube ─────────────────────────────────────────────────────
     auto* wallTube = new GeoTube(rGas, rWall, half);
-    auto* wallLog  = new GeoLogVol("StrawWall", wallTube, Mm.Mylar());
+    auto* wallLog  = new GeoLogVol("StrawWall_" + std::to_string(uid), wallTube, Mm.Mylar());
     auto* wallPhys = new GeoPhysVol(wallLog);
 
     // ── Inner (gas) tube ──────────────────────────────────────────────────────
     auto* gasTube  = new GeoTube(0.0, rGas, half);
-    auto* gasLog   = new GeoLogVol("StrawGas", gasTube, Mm.ArCO2());
+    auto* gasLog   = new GeoLogVol("StrawGas_" + std::to_string(uid), gasTube, Mm.ArCO2());
     auto* gasPhys  = new GeoPhysVol(gasLog);
 
     // Place gas inside wall (both share the same axis, no transform needed)
