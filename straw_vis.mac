@@ -1,5 +1,13 @@
 /vis/open OGL 1200x800
+
+# Draw the full geometry in the 3D viewport (all 19 000+ straws).
 /vis/drawVolume
+
+# If the "Too many touchables (19270) for scene tree" warning bothers you,
+# comment the line above and uncomment the next line. It draws only the
+# first 4 levels in the hierarchy (World → Station → Layer → Frame/SubLayer),
+# which lets the scene-tree sidebar populate but hides individual straws.
+#/vis/drawVolume World ! ! 4
 
 /vis/viewer/set/viewpointThetaPhi 80 20
 /vis/viewer/set/lightsThetaPhi    45 45
@@ -14,6 +22,3 @@
 /vis/scene/add/trajectories smooth
 /vis/scene/endOfEventAction accumulate 100
 /run/beamOn 0
-
-
-

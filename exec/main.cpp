@@ -2,17 +2,21 @@
 // Entry point for the straw tracker Geant4 simulation.
 //
 // Options:
-//   --n-events   <N>          Events to simulate            (default: 0)
-//   --output     <file>       ROOT output file name         (default: StrawTracker_hits.root)
-//   --seed       <N>          Random seed (0 = auto)        (default: 0)
-//   --particle   <name>       Geant4 particle name          (default: mu-)
-//   --energy-MeV <E>          Kinetic energy [MeV]          (default: 10000)
-//   --pos-mm     <x> <y> <z>  Gun position [mm] lab frame   (default: 0 0 24000)
-//   --dir        <x> <y> <z>  Direction unit vector         (default: 0 0 1)
-//   --visualize               Open interactive viewer
-//   --vis-macro  <file>       Vis macro                     (default: straw_vis.mac)
-//   --write-gdml              Export GDML
-//   --gdml-out   <file>       GDML file name                (default: StrawTracker_geometry.gdml)
+//   --n-events       <N>           Events to simulate            (default: 0)
+//   --output         <file>        ROOT output file name         (default: StrawTracker_hits.root)
+//   --seed           <N>           Random seed (0 = auto)        (default: 0)
+//   --particle       <n>           Geant4 particle name          (default: mu-)
+//   --energy-MeV     <E>           Kinetic energy [MeV]          (default: 10000)
+//   --pos-mm         <x> <y> <z>   Gun position [mm] lab frame   (default: 0 0 24000)
+//   --dir            <x> <y> <z>   Direction unit vector         (default: 0 0 1)
+//   --field-map      <file>        Magnetic field-map text file
+//                                  (empty = uniform -0.15 T fallback)
+//   --frame-material <n>           Frame material (Aluminum, Mylar, Air)
+//                                                                 (default: Aluminum)
+//   --visualize                    Open interactive viewer
+//   --vis-macro      <file>        Vis macro                     (default: straw_vis.mac)
+//   --write-gdml                   Export GDML
+//   --gdml-out       <file>        GDML file name                (default: StrawTracker_geometry.gdml)
 
 #include "TrackerDetectorConstruction.h"
 #include "TrackerActionInitialization.h"
@@ -43,11 +47,16 @@ struct Config {
     std::string visMacro  {"straw_vis.mac"};
     bool        writeGDML {false};
     std::string gdmlOut   {"StrawTracker_geometry.gdml"};
-    // Gun settings passed through to TrackerActionInitialization
+    // Gun settings
     std::string particle  {"mu-"};
     double      energyMeV {10000.};
-    double      posX      {0.}, posY{0.}, posZ{24000.};  // lab-frame mm
+    double      posX      {0.}, posY{0.}, posZ{24000.};
     double      dirX      {0.}, dirY{0.}, dirZ{1.};
+    bool        writeDB   {false};
+    std::string dbOut     {"StrawTracker.db"};
+    // New — field map and frame material
+    std::string fieldMap      {""};
+    std::string frameMaterial {"Aluminum"};
 };
 
 static Config parseArgs(int argc, char** argv) {
@@ -59,15 +68,19 @@ static Config parseArgs(int argc, char** argv) {
                 throw std::runtime_error(std::string(flag) + " requires argument");
             return argv[i];
         };
-        if      (a == "--n-events")    cfg.nEvents   = std::stoi(next(a.c_str()));
-        else if (a == "--output")      cfg.outFile    = next(a.c_str());
-        else if (a == "--seed")        cfg.seed       = std::stol(next(a.c_str()));
-        else if (a == "--particle")    cfg.particle   = next(a.c_str());
-        else if (a == "--energy-MeV")  cfg.energyMeV  = std::stod(next(a.c_str()));
-        else if (a == "--vis-macro")   cfg.visMacro   = next(a.c_str());
-        else if (a == "--gdml-out")    cfg.gdmlOut    = next(a.c_str());
-        else if (a == "--visualize")   cfg.visualize  = true;
-        else if (a == "--write-gdml")  cfg.writeGDML  = true;
+        if      (a == "--n-events")        cfg.nEvents       = std::stoi(next(a.c_str()));
+        else if (a == "--output")          cfg.outFile       = next(a.c_str());
+        else if (a == "--seed")            cfg.seed          = std::stol(next(a.c_str()));
+        else if (a == "--particle")        cfg.particle      = next(a.c_str());
+        else if (a == "--energy-MeV")      cfg.energyMeV     = std::stod(next(a.c_str()));
+        else if (a == "--vis-macro")       cfg.visMacro      = next(a.c_str());
+        else if (a == "--gdml-out")        cfg.gdmlOut       = next(a.c_str());
+        else if (a == "--visualize")       cfg.visualize     = true;
+        else if (a == "--write-gdml")      cfg.writeGDML     = true;
+        else if (a == "--write-db")        cfg.writeDB       = true;
+        else if (a == "--db-out")          cfg.dbOut         = next(a.c_str());
+        else if (a == "--field-map")       cfg.fieldMap      = next(a.c_str());
+        else if (a == "--frame-material")  cfg.frameMaterial = next(a.c_str());
         else if (a == "--pos-mm") {
             cfg.posX = std::stod(next(a.c_str()));
             cfg.posY = std::stod(next(a.c_str()));
@@ -106,7 +119,8 @@ int main(int argc, char** argv) {
 
     // Run manager
     auto* runMgr = G4RunManagerFactory::CreateRunManager(G4RunManagerType::SerialOnly);
-    runMgr->SetUserInitialization(new TrackerDetectorConstruction());
+    runMgr->SetUserInitialization(
+        new TrackerDetectorConstruction(cfg.fieldMap, cfg.frameMaterial));
     runMgr->SetUserInitialization(new FTFP_BERT());
 
     // Build gun config and pass to action initialisation

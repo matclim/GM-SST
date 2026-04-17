@@ -11,6 +11,7 @@ find_package(Geant4 REQUIRED ui_all vis_all)
 find_package(GeoModelCore REQUIRED COMPONENTS GeoModelKernel)
 find_package(GeoModelG4   REQUIRED COMPONENTS GeoModel2G4)
 find_package(ROOT         REQUIRED COMPONENTS Core RIO Tree)
+find_package(GeoModelIO REQUIRED COMPONENTS GeoModelWrite)
 
 # GeoModel installs everything under one prefix.
 # GeoModelCore_DIR is the cmake config dir, typically:
@@ -54,6 +55,7 @@ include(${ROOT_USE_FILE})
 set(SOURCES
     src/MaterialManager.cpp
     src/MagneticFieldRegion.cpp
+    src/ShipFieldMap.cpp
     src/StrawTrackerBuilder.cpp
     src/TrackerDetectorConstruction.cpp
     src/TrackerSD.cpp
@@ -80,7 +82,8 @@ target_include_directories(run_StrawTracker
 target_link_libraries(run_StrawTracker
     PRIVATE
         ${Geant4_LIBRARIES}
-        -L${GEOMODEL_LIB_DIR} -lGeoModelKernel -lGeoModel2G4
+        -L${GEOMODEL_LIB_DIR} -lGeoModelKernel -lGeoModel2G4 -lGeoModelWrite -lGeoModelDBManager
+        -L/home/matei/geomodel/install/lib -lGeoModelDBManager 
         ${ROOT_LIBRARIES}
 )
 
