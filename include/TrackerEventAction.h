@@ -27,9 +27,11 @@ private:
     TrackerSD* m_sd   {nullptr};   // resolved lazily on first event
 
     // Branch buffers
-    std::vector<int>    m_trackID, m_stationID, m_layerID, m_subLayerID, m_strawID;
+    std::vector<int>    m_trackID, m_parentID, m_pdg, m_stationID, m_layerID, m_subLayerID, m_strawID;
     std::vector<double> m_edep;
     std::vector<double> m_x,  m_y,  m_z;
     std::vector<double> m_xe, m_ye, m_ze;   // entry
     std::vector<double> m_xx, m_yx, m_zx;   // exit
+    std::vector<double> m_vx, m_vy, m_vz;   // production vertex
+    std::vector<double> m_px, m_py, m_pz;   // truth momentum at production
 };

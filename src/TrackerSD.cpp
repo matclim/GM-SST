@@ -10,6 +10,7 @@
 // The copy numbers set via GeoIdentifierTag map to straw/sub-layer/layer/station IDs.
 
 #include "TrackerSD.h"
+#include <cmath>
 
 #include "G4Step.hh"
 #include "G4Track.hh"
@@ -56,8 +57,23 @@ G4bool TrackerSD::ProcessHits(G4Step* step, G4TouchableHistory*) {
     const G4ThreeVector post = step->GetPostStepPoint()->GetPosition();
     const G4ThreeVector mid  = 0.5 * (pre + post);
 
+    const G4Track* trk = step->GetTrack();
+    const G4ThreeVector vtx  = trk->GetVertexPosition();
+    // truth momentum at production = |p| * direction at vertex
+    const G4ThreeVector vdir = trk->GetVertexMomentumDirection();
+    const double m0   = trk->GetDefinition()->GetPDGMass();
+    const double eKin = trk->GetVertexKineticEnergy();
+    const double pMag = std::sqrt(eKin * (eKin + 2.0 * m0));
     StrawHit hit;
-    hit.trackID    = step->GetTrack()->GetTrackID();
+    hit.trackID    = trk->GetTrackID();
+    hit.parentID   = trk->GetParentID();
+    hit.pdg        = trk->GetDefinition()->GetPDGEncoding();
+    hit.vtxX       = vtx.x() / mm;
+    hit.vtxY       = vtx.y() / mm;
+    hit.vtxZ       = vtx.z() / mm;
+    hit.vpx        = pMag * vdir.x() / MeV;
+    hit.vpy        = pMag * vdir.y() / MeV;
+    hit.vpz        = pMag * vdir.z() / MeV;
     hit.stationID  = stationID;
     hit.layerID    = layerID;
     hit.subLayerID = subLayerID;

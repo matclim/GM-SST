@@ -11,6 +11,8 @@ void TrackerEventAction::setTree(TTree* tree) {
     if (!tree) return;
 
     tree->Branch("trackID",    &m_trackID);
+    tree->Branch("parentID",   &m_parentID);
+    tree->Branch("pdg",        &m_pdg);
     tree->Branch("stationID",  &m_stationID);
     tree->Branch("layerID",    &m_layerID);
     tree->Branch("subLayerID", &m_subLayerID);
@@ -25,15 +27,23 @@ void TrackerEventAction::setTree(TTree* tree) {
     tree->Branch("x_exit",     &m_xx);
     tree->Branch("y_exit",     &m_yx);
     tree->Branch("z_exit",     &m_zx);
+    tree->Branch("vtxX",       &m_vx);
+    tree->Branch("vtxY",       &m_vy);
+    tree->Branch("vtxZ",       &m_vz);
+    tree->Branch("vpx",        &m_px);
+    tree->Branch("vpy",        &m_py);
+    tree->Branch("vpz",        &m_pz);
 }
 
 void TrackerEventAction::BeginOfEventAction(const G4Event*) {
-    m_trackID.clear();   m_stationID.clear();
+    m_trackID.clear();   m_parentID.clear();   m_pdg.clear();   m_stationID.clear();
     m_layerID.clear();   m_subLayerID.clear();  m_strawID.clear();
     m_edep.clear();
     m_x.clear();  m_y.clear();  m_z.clear();
     m_xe.clear(); m_ye.clear(); m_ze.clear();
     m_xx.clear(); m_yx.clear(); m_zx.clear();
+    m_vx.clear(); m_vy.clear(); m_vz.clear();
+    m_px.clear(); m_py.clear(); m_pz.clear();
 }
 
 void TrackerEventAction::EndOfEventAction(const G4Event*) {
@@ -48,6 +58,8 @@ void TrackerEventAction::EndOfEventAction(const G4Event*) {
 
     for (const auto& h : m_sd->hits()) {
         m_trackID   .push_back(h.trackID);
+        m_parentID  .push_back(h.parentID);
+        m_pdg       .push_back(h.pdg);
         m_stationID .push_back(h.stationID);
         m_layerID   .push_back(h.layerID);
         m_subLayerID.push_back(h.subLayerID);
@@ -56,6 +68,8 @@ void TrackerEventAction::EndOfEventAction(const G4Event*) {
         m_x .push_back(h.x);   m_y .push_back(h.y);   m_z .push_back(h.z);
         m_xe.push_back(h.x_entry); m_ye.push_back(h.y_entry); m_ze.push_back(h.z_entry);
         m_xx.push_back(h.x_exit);  m_yx.push_back(h.y_exit);  m_zx.push_back(h.z_exit);
+        m_vx.push_back(h.vtxX);    m_vy.push_back(h.vtxY);    m_vz.push_back(h.vtxZ);
+        m_px.push_back(h.vpx);     m_py.push_back(h.vpy);     m_pz.push_back(h.vpz);
     }
 
     m_tree->Fill();

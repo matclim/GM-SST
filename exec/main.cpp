@@ -16,10 +16,13 @@
 //   --visualize                    Open interactive viewer
 //   --vis-macro      <file>        Vis macro                     (default: straw_vis.mac)
 //   --write-gdml                   Export GDML
+//   --dump-straws    <file>        Dump straw wire geometry -> ROOT and exit
+//   --force-decay    2cpi          Force K0_S -> pi+ pi- (skip pi0 pi0 channel)
 //   --gdml-out       <file>        GDML file name                (default: StrawTracker_geometry.gdml)
 
 #include "TrackerDetectorConstruction.h"
 #include "TrackerActionInitialization.h"
+#include "StrawTrackerBuilder.h"
 
 #include "G4RunManagerFactory.hh"
 #include "G4UImanager.hh"
@@ -27,6 +30,10 @@
 #include "G4UIExecutive.hh"
 #include "G4TransportationManager.hh"
 #include "FTFP_BERT.hh"
+#include "G4ParticleTable.hh"
+#include "G4ParticleDefinition.hh"
+#include "G4DecayTable.hh"
+#include "G4PhaseSpaceDecayChannel.hh"
 #include "G4GDMLParser.hh"
 #include "G4SystemOfUnits.hh"
 #include "CLHEP/Random/Random.h"
@@ -57,6 +64,8 @@ struct Config {
     // New — field map and frame material
     std::string fieldMap      {""};
     std::string frameMaterial {"Aluminum"};
+    std::string dumpStraws    {""};
+    std::string forceDecay    {""};
 };
 
 static Config parseArgs(int argc, char** argv) {
@@ -81,6 +90,8 @@ static Config parseArgs(int argc, char** argv) {
         else if (a == "--db-out")          cfg.dbOut         = next(a.c_str());
         else if (a == "--field-map")       cfg.fieldMap      = next(a.c_str());
         else if (a == "--frame-material")  cfg.frameMaterial = next(a.c_str());
+        else if (a == "--dump-straws")     cfg.dumpStraws     = next(a.c_str());
+        else if (a == "--force-decay")     cfg.forceDecay     = next(a.c_str());
         else if (a == "--pos-mm") {
             cfg.posX = std::stod(next(a.c_str()));
             cfg.posY = std::stod(next(a.c_str()));
@@ -103,6 +114,12 @@ int main(int argc, char** argv) {
     catch (const std::exception& e) {
         std::cerr << "Argument error: " << e.what() << "\n";
         return 1;
+    }
+
+    // Standalone straw-geometry dump for the ACTS reconstruction (no sim run).
+    if (!cfg.dumpStraws.empty()) {
+        StrawTrackerBuilder::dumpStrawTable(cfg.dumpStraws);
+        return 0;
     }
 
     // Random seed
@@ -137,6 +154,19 @@ int main(int argc, char** argv) {
     runMgr->SetUserInitialization(new TrackerActionInitialization(cfg.outFile, gunCfg));
 
     runMgr->Initialize();
+
+    // Force K0_S -> pi+ pi- if requested (particles exist post-Initialize()).
+    if (cfg.forceDecay == "2cpi") {
+        auto* ks = G4ParticleTable::GetParticleTable()->FindParticle("kaon0S");
+        if (ks) {
+            auto* dt = new G4DecayTable();
+            dt->Insert(new G4PhaseSpaceDecayChannel("kaon0S", 1.0, 2, "pi+", "pi-"));
+            ks->SetDecayTable(dt);
+            std::cout << "[main] forced K0_S -> pi+ pi- (BR 1.0)\n";
+        } else {
+            std::cerr << "[main] --force-decay: kaon0S not found\n";
+        }
+    }
 
     // Export GDML
     if (cfg.writeGDML) {

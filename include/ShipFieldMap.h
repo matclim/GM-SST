@@ -1,9 +1,19 @@
 #pragma once
 // ShipFieldMap.h
-// G4MagneticField that reads a 3-D field map from a text file and does
-// trilinear interpolation.
+// G4MagneticField that reads a 3-D field map and does trilinear interpolation.
 //
-// Expected file format (whitespace-separated, one data point per line):
+// Two on-disk formats are supported, chosen automatically from the file
+// extension passed to the constructor:
+//
+//   *.root  → a ROOT file containing two TTrees (see loadRootFile):
+//               "Range" (1 entry): xMin,xMax,dx, yMin,yMax,dy, zMin,zMax,dz
+//               "Data"  (N entries): x,y,z, Bx,By,Bz   (all Float_t / "/F")
+//             Positions are in mm (magnet frame), field values in Tesla —
+//             i.e. exactly the same conventions as the text format below.
+//
+//   anything else → the whitespace-separated text format:
+//
+// Expected text file format (whitespace-separated, one data point per line):
 //
 //   X_SHiP   Y_SHiP   Z_SHiP   BX_SHiP   BY_SHiP   BZ_SHiP    ← optional header
 //   -5000    -5000    -7500    0.00150...  9.09e-05  5.49e-04
@@ -56,7 +66,21 @@ private:
         return (static_cast<std::size_t>(iz) * m_nY + iy) * m_nX + ix;
     }
 
+    // Dispatches to loadTextFile / loadRootFile based on the file extension.
     void loadFile(const std::string& file);
+
+    // Loader for the whitespace-separated text format.
+    void loadTextFile(const std::string& file);
+
+    // Loader for the ROOT "Range"+"Data" TTree format.
+    void loadRootFile(const std::string& file);
+
+    // Shared: allocate the flat B arrays and bin one (x,y,z,Bx,By,Bz) sample
+    // into them by nearest grid index. Assumes the grid geometry (m_nX..,
+    // m_xMin.., m_dx..) is already set. Called per data point by both loaders.
+    void allocateGrid();
+    void placeSample(double x, double y, double z,
+                     double bx, double by, double bz);
 
     // Field components (Tesla), flat arrays of size nX*nY*nZ
     std::vector<float> m_Bx, m_By, m_Bz;

@@ -43,6 +43,12 @@ public:
     // Returns the world physical volume; call once.
     GeoPhysVol* buildWorld();
 
+    // Dump every straw wire (world frame, mm) to a "Straws" TTree, for the
+    // ACTS reconstruction to build StrawSurfaces from. Standalone: computes
+    // from the geometry constants below, no built detector required.
+    static void dumpStrawTable(const std::string& outFile,
+                               double worldZOriginMM = 31000.0);
+
     // ── Geometry constants ────────────────────────────────────────────────
     static constexpr int    kNStations    = 4;
     static constexpr int    kNLayers      = 4;   // per station (= views)

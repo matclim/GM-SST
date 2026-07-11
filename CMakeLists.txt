@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.16)
 project(StrawTracker VERSION 1.0 LANGUAGES CXX)
 
+# ── Default build type ────────────────────────────────────────────────────────
+# A bare `cmake ..` otherwise leaves CMAKE_BUILD_TYPE empty -> no NDEBUG, which
+# leaves ACTS' internal debug asserts (e.g. the field-interpolation bounds
+# check) live. Default to Release so runs are optimized and assert-free.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    message(STATUS "No build type specified -- defaulting to Release")
+endif()
+
 # ── C++ standard ──────────────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,7 +60,7 @@ endif()
 include(${Geant4_USE_FILE})
 include(${ROOT_USE_FILE})
 
-# ── Sources ───────────────────────────────────────────────────────────────────
+# ── Geant4 simulation sources ─────────────────────────────────────────────────
 set(SOURCES
     src/MaterialManager.cpp
     src/MagneticFieldRegion.cpp
@@ -65,7 +74,7 @@ set(SOURCES
     src/TrackerPrimaryGeneratorAction.cpp
 )
 
-# ── Executable ────────────────────────────────────────────────────────────────
+# ── Simulation executable ─────────────────────────────────────────────────────
 add_executable(run_StrawTracker exec/main.cpp ${SOURCES})
 
 # Enforce C++20 on the target -- takes precedence over anything Geant4's
@@ -83,12 +92,77 @@ target_link_libraries(run_StrawTracker
     PRIVATE
         ${Geant4_LIBRARIES}
         -L${GEOMODEL_LIB_DIR} -lGeoModelKernel -lGeoModel2G4 -lGeoModelWrite -lGeoModelDBManager
-        -L/home/matei/geomodel/install/lib -lGeoModelDBManager 
         ${ROOT_LIBRARIES}
 )
 
 # ── Copy vis macro to build dir ───────────────────────────────────────────────
 configure_file(straw_vis.mac ${CMAKE_CURRENT_BINARY_DIR}/straw_vis.mac COPYONLY)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ACTS-based reconstruction (tracking + vertexing)
+#
+#  Standalone library `ship_reco` + app `run_reco`, built ONLY when ACTS is
+#  found so the simulation above always configures. To point CMake at ACTS:
+#     - source an LCG view on CVMFS that contains it, OR
+#     - configure with -DCMAKE_PREFIX_PATH=<acts-install>  (or -DActs_DIR=...)
+# ══════════════════════════════════════════════════════════════════════════════
+option(STRAWTRACKER_BUILD_RECO "Build the ACTS-based reconstruction" ON)
+
+if(STRAWTRACKER_BUILD_RECO)
+    # ACTS ships a CMake config package. Core is enough for geometry, field,
+    # propagation, CKF/KF fitting, and vertexing (all in Acts::Core).
+    find_package(Acts CONFIG QUIET COMPONENTS Core)
+
+    if(Acts_FOUND)
+        # Namespaced target in modern ACTS; fall back to the old name.
+        if(TARGET Acts::Core)
+            set(ACTS_CORE_TARGET Acts::Core)
+        elseif(TARGET ActsCore)
+            set(ACTS_CORE_TARGET ActsCore)
+        else()
+            message(FATAL_ERROR "ACTS found but neither Acts::Core nor ActsCore target exists")
+        endif()
+
+        # Reco modules. Add the others as you build them:
+        #   geometry/ShipTrackingGeometry.cpp
+        #   edm/ShipMeasurement.cpp
+        #   seeding/ShipSeeder.cpp
+        #   finding/ShipTrackFinding.cpp
+        #   fitting/ShipTrackFitting.cpp
+        #   vertexing/ShipVertexing.cpp
+        set(RECO_SOURCES
+            src/ActsShipField.cpp
+            src/ShipGeometry.cpp
+            src/ShipStrawGeometry.cpp
+            src/ShipHitReader.cpp
+            src/ShipSeeder.cpp
+            src/ShipTrackFitter.cpp
+            src/ShipVertexer.cpp
+        )
+
+        add_library(ship_reco STATIC ${RECO_SOURCES})
+        target_compile_features(ship_reco PUBLIC cxx_std_20)
+        target_include_directories(ship_reco
+            PUBLIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_link_libraries(ship_reco
+            PUBLIC
+                ${ACTS_CORE_TARGET}
+                ROOT::Core ROOT::RIO ROOT::Tree
+        )
+
+        # Reconstruction driver.
+        add_executable(run_reco src/run_reco.cpp)
+        target_link_libraries(run_reco PRIVATE ship_reco)
+        target_compile_features(run_reco PRIVATE cxx_std_20)
+
+        message(STATUS "ACTS found (${Acts_VERSION}) -> building ship_reco [${ACTS_CORE_TARGET}]")
+    else()
+        message(STATUS "ACTS not found -> skipping reconstruction. "
+                       "Set CMAKE_PREFIX_PATH or Acts_DIR, or source an LCG view.")
+    endif()
+endif()
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 message(STATUS "")
@@ -98,5 +172,6 @@ message(STATUS "  ROOT version   : ${ROOT_VERSION}")
 message(STATUS "  GeoModel prefix: ${GEOMODEL_PREFIX}")
 message(STATUS "  Eigen3 include : ${EIGEN3_INCLUDE_DIR}")
 message(STATUS "  C++ standard   : ${CMAKE_CXX_STANDARD}")
+message(STATUS "  Build reco     : ${STRAWTRACKER_BUILD_RECO} (ACTS found: ${Acts_FOUND})")
 message(STATUS "========================================")
 message(STATUS "")
