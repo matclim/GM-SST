@@ -9,6 +9,7 @@
 // vertex with the Billoir fitter. Writes a per-event vertex tree with the
 // fitted-vs-truth residual.
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -66,6 +67,29 @@ static Acts::Vector3 twoLineMidpoint(const Acts::Vector3& P0, const Acts::Vector
   return 0.5 * ((P0 + t0 * d0) + (P1 + t1 * d1));
 }
 
+// Closest distance between two lines (P0,d0),(P1,d1).
+static double lineLineDOCA(const Acts::Vector3& P0, const Acts::Vector3& d0,
+                           const Acts::Vector3& P1, const Acts::Vector3& d1) {
+  const Acts::Vector3 n = d0.cross(d1);
+  const double nn = n.norm();
+  if (nn < 1e-9) return (P1 - P0).cross(d0).norm();   // parallel
+  return std::fabs((P1 - P0).dot(n)) / nn;
+}
+
+// Least-squares point closest to N lines (minimizes sum of squared distances).
+static Acts::Vector3 multiLineVertex(const std::vector<Acts::Vector3>& P,
+                                     const std::vector<Acts::Vector3>& D) {
+  Acts::SquareMatrix<3> A = Acts::SquareMatrix<3>::Zero();
+  Acts::Vector3 b = Acts::Vector3::Zero();
+  for (std::size_t i = 0; i < P.size(); ++i) {
+    const Acts::Vector3 d = D[i].normalized();
+    Acts::SquareMatrix<3> M = Acts::SquareMatrix<3>::Identity() - d * d.transpose();
+    A += M; b += M * P[i];
+  }
+  if (std::fabs(A.determinant()) < 1e-9) return P.empty() ? Acts::Vector3::Zero() : P[0];
+  return A.inverse() * b;
+}
+
 int main(int argc, char** argv) {
   const std::string hitsFile  = opt(argc, argv, "--hits", "ks.root");
   const std::string fieldFile = opt(argc, argv, "--field", "");
@@ -109,6 +133,22 @@ int main(int argc, char** argv) {
   double b_p0=0,b_p1=0,b_q0=0,b_q1=0;   // per-track momentum (GeV) and charge sign
   vtree.Branch("p0",&b_p0); vtree.Branch("p1",&b_p1);
   vtree.Branch("q0",&b_q0); vtree.Branch("q1",&b_q1);
+  // DOCA: track-to-track (consistency) and track-to-vertex (impact parameters)
+  double b_docaMax=0, b_docaMean=0, b_ipMax=0, b_ipMean=0;
+  int    b_nTruthAcc=0, b_nTruthHit=0, b_nFitted=0;
+  vtree.Branch("docaMax",&b_docaMax);   // max pairwise track-track DOCA [mm]
+  vtree.Branch("docaMean",&b_docaMean);
+  vtree.Branch("ipMax",&b_ipMax);       // max track impact param wrt vertex [mm]
+  vtree.Branch("ipMean",&b_ipMean);
+  vtree.Branch("nTruthAcc",&b_nTruthAcc);  // truth tracks pointing INTO the detector
+  vtree.Branch("nTruthHit",&b_nTruthHit);  // truth tracks that actually left hits
+  vtree.Branch("nFitted",&b_nFitted);      // tracks successfully fitted
+  // per-station: HOW MANY truth tracks are in acceptance at each station
+  int b_nGeo[4] = {0,0,0,0}, b_nHit[4] = {0,0,0,0};
+  vtree.Branch("nGeoAcc0",&b_nGeo[0]); vtree.Branch("nGeoAcc1",&b_nGeo[1]);
+  vtree.Branch("nGeoAcc2",&b_nGeo[2]); vtree.Branch("nGeoAcc3",&b_nGeo[3]);
+  vtree.Branch("nHitAcc0",&b_nHit[0]); vtree.Branch("nHitAcc1",&b_nHit[1]);
+  vtree.Branch("nHitAcc2",&b_nHit[2]); vtree.Branch("nHitAcc3",&b_nHit[3]);
 
   // ---- per-track tree: fitted vs truth (angular + momentum + charge) ------
   TTree ttree("Tracks", "Fitted tracks vs truth");
@@ -127,12 +167,55 @@ int main(int argc, char** argv) {
   ttree.Branch("qFit",&t_qFit);     ttree.Branch("qTrue",&t_qTrue);
   ttree.Branch("chi2",&t_chi2);     ttree.Branch("nMeas",&t_nMeas);
   double t_bestChi2=0;
-  ttree.Branch("bestChi2",&t_bestChi2);   // chi2/ndf of the winning hypothesis
+  ttree.Branch("bestChi2",&t_bestChi2);
+  int t_inAcc=0;
+  ttree.Branch("inAcc",&t_inAcc);   // truth: crosses ALL 4 stations (geometric)
+  // per-station acceptance: geometric (straight-line truth) vs actual hits
+  int t_geoAcc[4] = {0,0,0,0};
+  int t_hitAcc[4] = {0,0,0,0};
+  int t_nGeoAcc=0, t_nHitAcc=0;
+  ttree.Branch("geoAcc0",&t_geoAcc[0]); ttree.Branch("geoAcc1",&t_geoAcc[1]);
+  ttree.Branch("geoAcc2",&t_geoAcc[2]); ttree.Branch("geoAcc3",&t_geoAcc[3]);
+  ttree.Branch("hitAcc0",&t_hitAcc[0]); ttree.Branch("hitAcc1",&t_hitAcc[1]);
+  ttree.Branch("hitAcc2",&t_hitAcc[2]); ttree.Branch("hitAcc3",&t_hitAcc[3]);
+  ttree.Branch("nGeoAcc",&t_nGeoAcc);   // 0-4 stations geometrically crossed
+  ttree.Branch("nHitAcc",&t_nHitAcc);   // 0-4 stations actually hit
 
   auto events = readEvents(hitsFile, /*primaryOnly=*/false);
   std::cout << "read " << events.size() << " events from " << hitsFile << "\n";
 
   int nVtx = 0, nRejected = 0, nKept = 0; long processed = 0;
+  // efficiency breakdown
+  int nEvTruth2 = 0;      // events with >=2 truth pions pointing at the detector
+  int nEvHits2  = 0;      // events with >=2 pions leaving hits
+  int nEvFit2   = 0;      // events with >=2 fitted tracks
+  int nEvVtx    = 0;      // events with a reconstructed vertex
+
+  // Station z (world frame) and half-apertures.
+  const double kStationZ[4] = {-4500.0, -2000.0, 3000.0, 4500.0};
+  const double kHalfX = 2000.0, kHalfY = 3000.0;
+
+  // GEOMETRIC acceptance, PER STATION: straight-line swim of the truth momentum
+  // from the truth vertex. Exact upstream of the magnet (field-free); for the
+  // downstream stations (2,3) it ignores bending, so compare with hitAcc below:
+  // the DIFFERENCE (geoAcc - hitAcc) is the bending/interaction loss.
+  auto geoAccPerStation = [&](const Acts::Vector3& vtx, const Acts::Vector3& p,
+                              std::array<int,4>& acc) {
+    acc = {0,0,0,0};
+    if (p.z() <= 0) return;
+    const Acts::Vector3 d = p.normalized();
+    for (int k = 0; k < 4; ++k) {
+      const double t = (kStationZ[k] - vtx.z()) / d.z();
+      if (t < 0) continue;
+      const Acts::Vector3 at = vtx + t * d;
+      acc[k] = (std::fabs(at.x()) <= kHalfX && std::fabs(at.y()) <= kHalfY) ? 1 : 0;
+    }
+  };
+  // convenience: all four stations
+  auto truthInAcceptance = [&](const Acts::Vector3& vtx, const Acts::Vector3& p) {
+    std::array<int,4> a; geoAccPerStation(vtx, p, a);
+    return a[0] && a[1] && a[2] && a[3];
+  };
   for (const auto& ev : events) {
     if (nMax >= 0 && processed >= nMax) break;
     const int eventId = static_cast<int>(processed); ++processed;
@@ -141,6 +224,31 @@ int main(int argc, char** argv) {
     std::map<int, std::vector<const RawHit*>> byTrack;
     for (const auto& h : ev.hits)
       if (h.parentID == 1 && std::abs(h.pdg) == 211) byTrack[h.trackID].push_back(&h);
+
+    // ---- TRUTH acceptance: how many decay pions POINT AT the detector? -----
+    // (one entry per distinct truth track; uses the truth vertex + truth momentum)
+    std::map<int, Acts::Vector3> truthMom;   // trackID -> truth p (MeV)
+    for (const auto& h : ev.hits)
+      if (h.parentID == 1 && std::abs(h.pdg) == 211 && !truthMom.count(h.trackID))
+        truthMom[h.trackID] = Acts::Vector3(h.vpx, h.vpy, h.vpz);
+    const Acts::Vector3 tvtx(ev.truthVtxX, ev.truthVtxY, ev.truthVtxZ);
+    int nTruthAcc = 0;
+    std::array<int,4> nGeoStn{0,0,0,0}, nHitStn{0,0,0,0};
+    for (const auto& [tid, tp] : truthMom) {
+      std::array<int,4> ga; geoAccPerStation(tvtx, tp, ga);
+      for (int k = 0; k < 4; ++k) nGeoStn[k] += ga[k];
+      if (ga[0] && ga[1] && ga[2] && ga[3]) ++nTruthAcc;
+      // stations actually hit by this truth track
+      if (byTrack.count(tid))
+        for (int k = 0; k < 4; ++k)
+          for (const auto* h : byTrack.at(tid))
+            if (h->stationID == k) { ++nHitStn[k]; break; }
+    }
+    const int nTruthHit = static_cast<int>(byTrack.size());
+    for (int k = 0; k < 4; ++k) { b_nGeo[k] = nGeoStn[k]; b_nHit[k] = nHitStn[k]; }
+    if (nTruthAcc >= 2) ++nEvTruth2;
+    if (nTruthHit >= 2) ++nEvHits2;
+
     if (byTrack.size() < 2) continue;
 
     std::vector<Acts::BoundTrackParameters> fitted;   // must outlive vertex fit
@@ -252,6 +360,17 @@ int main(int argc, char** argv) {
         t_qTrue = (ths.front()->pdg > 0) ? +1 : -1;   // pi+ = 211
         t_chi2 = trk.chi2(); t_nMeas = static_cast<int>(trk.nMeasurements());
         t_bestChi2 = bestChi2;
+        {
+          std::array<int,4> ga; geoAccPerStation(tvtx, pT, ga);
+          std::array<int,4> ha{0,0,0,0};
+          for (const auto* h : ths) if (h->stationID >= 0 && h->stationID < 4) ha[h->stationID] = 1;
+          t_nGeoAcc = 0; t_nHitAcc = 0;
+          for (int k = 0; k < 4; ++k) {
+            t_geoAcc[k] = ga[k]; t_hitAcc[k] = ha[k];
+            t_nGeoAcc += ga[k]; t_nHitAcc += ha[k];
+          }
+          t_inAcc = (t_nGeoAcc == 4) ? 1 : 0;
+        }
         ttree.Fill(); ++nKept;
 
         if (pGeV < 0.05) continue;   // only reject degenerate fits
@@ -260,20 +379,39 @@ int main(int argc, char** argv) {
     }
 
     if (fitted.size() < 2) continue;
+    ++nEvFit2;
 
-    // Seed the vertex at the two tracks' 3D closest approach.
+    // ---- N-track vertex seed: least-squares point closest to all tracks ----
     auto dirOf = [](const Acts::BoundTrackParameters& p) {
       const double th = p.parameters()[Acts::eBoundTheta];
       const double ph = p.parameters()[Acts::eBoundPhi];
       return Acts::Vector3(std::sin(th)*std::cos(ph),
                            std::sin(th)*std::sin(ph), std::cos(th));
     };
-    Acts::Vector3 P0 = fitted[0].position(ctx.gctx), d0 = dirOf(fitted[0]);
-    Acts::Vector3 P1 = fitted[1].position(ctx.gctx), d1 = dirOf(fitted[1]);
-    Acts::Vector3 seedPos = twoLineMidpoint(P0, d0, P1, d1);
+    std::vector<Acts::Vector3> Pv, Dv;
+    for (const auto& f : fitted) { Pv.push_back(f.position(ctx.gctx)); Dv.push_back(dirOf(f)); }
+    Acts::Vector3 seedPos = multiLineVertex(Pv, Dv);
+
+    // ---- DOCA 1: pairwise track-to-track (vertex consistency) --------------
+    double docaMax = 0.0, docaSum = 0.0; int nPair = 0;
+    for (std::size_t i = 0; i < Pv.size(); ++i)
+      for (std::size_t j = i + 1; j < Pv.size(); ++j) {
+        const double dd = lineLineDOCA(Pv[i], Dv[i], Pv[j], Dv[j]);
+        docaMax = std::max(docaMax, dd); docaSum += dd; ++nPair;
+      }
+    const double docaMean = (nPair > 0) ? docaSum / nPair : 0.0;
 
     auto vres = vertexer.fit(ctx, fitted, seedPos);
     if (!vres) continue;
+
+    // ---- DOCA 2: each track's impact parameter wrt the FITTED vertex -------
+    double ipMax = 0.0, ipSum = 0.0;
+    for (std::size_t i = 0; i < Pv.size(); ++i) {
+      const Acts::Vector3 r = vres->position - Pv[i];
+      const double ip = r.cross(Dv[i].normalized()).norm();   // perpendicular distance
+      ipMax = std::max(ipMax, ip); ipSum += ip;
+    }
+    const double ipMean = Pv.empty() ? 0.0 : ipSum / Pv.size();
 
     b_event=eventId; b_nTrk=vres->nTracks;
     b_vx=vres->position.x(); b_vy=vres->position.y(); b_vz=vres->position.z();
@@ -282,16 +420,24 @@ int main(int argc, char** argv) {
     b_sz=std::sqrt(std::max(0.0,vres->covariance(2,2)));
     b_tx=ev.truthVtxX; b_ty=ev.truthVtxY; b_tz=ev.truthVtxZ;
     b_rx=b_vx-b_tx; b_ry=b_vy-b_ty; b_rz=b_vz-b_tz;
+    b_docaMax=docaMax; b_docaMean=docaMean; b_ipMax=ipMax; b_ipMean=ipMean;
+    b_nTruthAcc=nTruthAcc; b_nTruthHit=nTruthHit;
+    b_nFitted=static_cast<int>(fitted.size());
     b_p0=fitted[0].absoluteMomentum()/Acts::UnitConstants::GeV;
     b_p1=fitted[1].absoluteMomentum()/Acts::UnitConstants::GeV;
     b_q0=fitted[0].parameters()[Acts::eBoundQOverP]>0?+1:-1;
     b_q1=fitted[1].parameters()[Acts::eBoundQOverP]>0?+1:-1;
-    vtree.Fill(); ++nVtx;
+    vtree.Fill(); ++nVtx; ++nEvVtx;
   }
 
   fout.cd(); vtree.Write(); ttree.Write(); fout.Close();
-  std::cout << "tracks kept " << nKept << ", rejected " << nRejected
-            << " (chi2/ndf > " << chi2Max << ")\n"
-            << "reconstructed " << nVtx << " vertices; wrote " << recoOut << "\n";
+  std::cout << "\n=== efficiency breakdown (of " << processed << " events) ===\n"
+            << "  >=2 truth pions in acceptance : " << nEvTruth2 << "\n"
+            << "  >=2 pions leaving hits        : " << nEvHits2  << "\n"
+            << "  >=2 tracks fitted             : " << nEvFit2   << "\n"
+            << "  vertex reconstructed          : " << nEvVtx    << "\n"
+            << "  tracks kept/rejected          : " << nKept << " / " << nRejected
+            << "  (chi2/ndf > " << chi2Max << ")\n"
+            << "wrote " << recoOut << "\n";
   return 0;
 }
