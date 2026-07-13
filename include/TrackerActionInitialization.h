@@ -14,7 +14,8 @@ public:
         double      energyMeV    {10000.};
         double      posX         {0.};
         double      posY         {0.};
-        double      posZ         {24000.};   // lab-frame mm
+        double      posZ         {79320.};   // SHiP mm: 5 m upstream of station 0
+        std::string llpFile      {""};       // if set: replay LLP decays
         double      dirX         {0.};
         double      dirY         {0.};
         double      dirZ         {1.};

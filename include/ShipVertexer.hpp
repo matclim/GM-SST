@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+#include <vector>
 // reco: ShipVertexer.hpp — single-vertex Billoir fit over a set of tracks.
 #include <memory>
 #include <optional>
@@ -12,10 +14,34 @@
 
 namespace shipreco {
 
+/// Why a vertex fit failed. Distinguishes "the tracks never reached the perigee"
+/// (a propagation problem) from "Billoir diverged" (a fit problem) -- they need
+/// completely different fixes, and lumping them together hides which is which.
+enum class VertexFail {
+  None            = 0,
+  TooFewTracks    = 1,   // <2 tracks given
+  PropagationFail = 2,   // <2 tracks reached the perigee surface
+  BilloirFail     = 3    // the fit itself returned an error
+};
+
+/// Per-track propagation diagnostics. ACTS tells us *why* a propagation failed
+/// (path limit, step limit, stepper failure, surface unreachable, ...); throwing
+/// that away and inferring the cause from the outside wastes a lot of time.
+struct PropDiag {
+  bool        ok        {false};
+  std::string error     {};      // ACTS error message, if it failed
+  double      pathLen   {0.0};   // mm actually propagated
+  bool        backward  {false}; // did we go against the momentum?
+  double      distToVtx {0.0};   // |seed - track position| before propagating
+};
+
 struct VertexResult {
   Acts::Vector3       position{Acts::Vector3::Zero()};
   Acts::SquareMatrix<3> covariance{Acts::SquareMatrix<3>::Zero()};
   int nTracks{0};
+  int nPropagated{0};        // how many reached the perigee
+  VertexFail fail{VertexFail::None};
+  std::vector<PropDiag> propDiag;   // one per input track
 };
 
 class ShipVertexer {

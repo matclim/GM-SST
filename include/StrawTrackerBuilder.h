@@ -43,12 +43,6 @@ public:
     // Returns the world physical volume; call once.
     GeoPhysVol* buildWorld();
 
-    // Dump every straw wire (world frame, mm) to a "Straws" TTree, for the
-    // ACTS reconstruction to build StrawSurfaces from. Standalone: computes
-    // from the geometry constants below, no built detector required.
-    static void dumpStrawTable(const std::string& outFile,
-                               double worldZOriginMM = 31000.0);
-
     // ── Geometry constants ────────────────────────────────────────────────
     static constexpr int    kNStations    = 4;
     static constexpr int    kNLayers      = 4;   // per station (= views)
@@ -70,7 +64,43 @@ public:
     static constexpr double kStereoAngle  = 2.3;
 
     // Z positions of station centres (mm)
-    static constexpr std::array<double,4> kStationZ = {26500., 29000., 34000., 35500.};
+    // SHiP frame (mm). Station 0 at 84320; spacings preserved (2500/5000/1500).
+    // Magnet centre sits at 89220, inside the 5000 mm gap between stations 1&2.
+    static constexpr std::array<double,4> kStationZ = {84320., 86820., 91820., 93320.};
+
+    /// SHiP-frame z of the Geant4/GeoModel world centre. World spans SHiP
+    /// z in [0, 120000] mm, so the centre is at 60000. All internal (world)
+    /// coordinates are SHiP - kWorldZOrigin; inputs/outputs are SHiP.
+    static constexpr double kWorldZOrigin = 60000.0;
+    static constexpr double kWorldHalfX   = 6000.0;    // 12 m x 12 m: must exceed
+    static constexpr double kWorldHalfY   = 6000.0;    // the spectrometer volume
+    static constexpr double kWorldHalfZ   = 60000.0;   // SHiP z 0 .. 120 m
+    static constexpr double kMagnetZ      = 89220.0;   // SHiP frame
+
+    // ---- Spectrometer volume ------------------------------------------------
+    // A single 20 m-long volume, centred on the magnet, that contains BOTH the
+    // four straw stations AND the whole field map. The field is attached here
+    // (propagated to daughters), and the map's own bounds return B = 0 outside
+    // itself -- so within this volume the field IS the map, and zero elsewhere.
+    // x/y match the field map exactly (+-5000 mm), which is why the world had
+    // to grow to +-6000 mm.
+    //
+    // Rationale: an undersized field volume silently TRUNCATES the field
+    // integral (a 3.5 m box against a 15 m map cost us a 50% momentum bias).
+    // Sizing the volume to the map, and containing the stations inside it,
+    // means a station moved outside the mapped region fails LOUDLY in Geant4
+    // rather than quietly reconstructing at the wrong momentum.
+    static constexpr double kSpecHalfX    = 5000.0;    // = field map extent
+    static constexpr double kSpecHalfY    = 5000.0;    // = field map extent
+    static constexpr double kSpecHalfZ    = 10000.0;   // 20 m long
+    static constexpr double kSpecZ        = kMagnetZ;  // centred on the magnet
+
+    /// Dump every straw wire (WORLD frame = SHiP - kWorldZOrigin, mm) to a
+    /// "Straws" TTree, for the ACTS reconstruction to build StrawSurfaces from.
+    /// Standalone: computed from the constants above, no built detector needed.
+    static void dumpStrawTable(const std::string& outFile,
+                               double worldZOriginMM = kWorldZOrigin);
+
 
     // ── Frame geometry (per view) ─────────────────────────────────────────
     // Frame material width beyond the aperture, in X and Y (mm).

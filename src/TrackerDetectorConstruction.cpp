@@ -77,7 +77,7 @@ G4VPhysicalVolume* TrackerDetectorConstruction::Construct() {
     }
 
     // ── Magnetic field region ─────────────────────────────────────────────
-    constexpr double worldZOriginMM = 31000.;
+    constexpr double worldZOriginMM = 60000.;
     MagneticFieldRegion::build(g4WorldLog, worldZOriginMM, m_fieldMapFile);
 
     G4VPhysicalVolume* g4World = new G4PVPlacement(

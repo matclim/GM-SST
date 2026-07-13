@@ -7,7 +7,7 @@
 //   --seed           <N>           Random seed (0 = auto)        (default: 0)
 //   --particle       <n>           Geant4 particle name          (default: mu-)
 //   --energy-MeV     <E>           Kinetic energy [MeV]          (default: 10000)
-//   --pos-mm         <x> <y> <z>   Gun position [mm] lab frame   (default: 0 0 24000)
+//   --pos-mm         <x> <y> <z>   Gun position [mm] SHiP frame  (default: 0 0 79320)
 //   --dir            <x> <y> <z>   Direction unit vector         (default: 0 0 1)
 //   --field-map      <file>        Magnetic field-map text file
 //                                  (empty = uniform -0.15 T fallback)
@@ -17,7 +17,10 @@
 //   --vis-macro      <file>        Vis macro                     (default: straw_vis.mac)
 //   --write-gdml                   Export GDML
 //   --dump-straws    <file>        Dump straw wire geometry -> ROOT and exit
-//   --force-decay    2cpi          Force K0_S -> pi+ pi- (skip pi0 pi0 channel)
+//   --force-decay    2cpi          Force K0_S -> pi+ pi-
+//   --llp-file       <file>        Replay LLP decays (data/DP_4pi.root):
+//                                  fires every charged daughter from the
+//                                  recorded vertex. Overrides the gun.
 //   --gdml-out       <file>        GDML file name                (default: StrawTracker_geometry.gdml)
 
 #include "TrackerDetectorConstruction.h"
@@ -57,7 +60,7 @@ struct Config {
     // Gun settings
     std::string particle  {"mu-"};
     double      energyMeV {10000.};
-    double      posX      {0.}, posY{0.}, posZ{24000.};
+    double      posX      {0.}, posY{0.}, posZ{79320.};  // SHiP mm: 5 m upstream of station 0
     double      dirX      {0.}, dirY{0.}, dirZ{1.};
     bool        writeDB   {false};
     std::string dbOut     {"StrawTracker.db"};
@@ -66,6 +69,7 @@ struct Config {
     std::string frameMaterial {"Aluminum"};
     std::string dumpStraws    {""};
     std::string forceDecay    {""};
+    std::string llpFile       {""};
 };
 
 static Config parseArgs(int argc, char** argv) {
@@ -92,6 +96,7 @@ static Config parseArgs(int argc, char** argv) {
         else if (a == "--frame-material")  cfg.frameMaterial = next(a.c_str());
         else if (a == "--dump-straws")     cfg.dumpStraws     = next(a.c_str());
         else if (a == "--force-decay")     cfg.forceDecay     = next(a.c_str());
+        else if (a == "--llp-file")        cfg.llpFile        = next(a.c_str());
         else if (a == "--pos-mm") {
             cfg.posX = std::stod(next(a.c_str()));
             cfg.posY = std::stod(next(a.c_str()));
@@ -116,7 +121,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Standalone straw-geometry dump for the ACTS reconstruction (no sim run).
+    // Standalone straw-geometry dump (no sim run).
     if (!cfg.dumpStraws.empty()) {
         StrawTrackerBuilder::dumpStrawTable(cfg.dumpStraws);
         return 0;
@@ -150,6 +155,7 @@ int main(int argc, char** argv) {
     gunCfg.dirX      = cfg.dirX;
     gunCfg.dirY      = cfg.dirY;
     gunCfg.dirZ      = cfg.dirZ;
+    gunCfg.llpFile   = cfg.llpFile;
 
     runMgr->SetUserInitialization(new TrackerActionInitialization(cfg.outFile, gunCfg));
 

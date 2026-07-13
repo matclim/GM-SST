@@ -25,7 +25,7 @@ void TrackerActionInitialization::Build() const {
 
     gun->SetParticleEnergy(m_gunCfg.energyMeV * MeV);
 
-    constexpr double worldZOriginMM = 31000.;
+    constexpr double worldZOriginMM = 60000.;   // SHiP frame: world centre
     gun->SetParticlePosition(G4ThreeVector(
         m_gunCfg.posX * mm,
         m_gunCfg.posY * mm,
@@ -34,6 +34,11 @@ void TrackerActionInitialization::Build() const {
     gun->SetParticleMomentumDirection(
         G4ThreeVector(m_gunCfg.dirX, m_gunCfg.dirY, m_gunCfg.dirZ).unit()
     );
+
+    // LLP mode overrides the gun entirely: every charged daughter is fired from
+    // the LLP's recorded decay vertex. The gun settings above are then ignored.
+    if (!m_gunCfg.llpFile.empty())
+        gen->openLLPFile(m_gunCfg.llpFile, worldZOriginMM);
 
     SetUserAction(gen);
 

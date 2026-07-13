@@ -65,6 +65,15 @@ void ShipFieldMap::allocateGrid() {
 // robust against small floating-point drift and against the data points being
 // listed in any order. Requires the grid geometry + arrays to be set up.
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// UNITS. The SHiP ROOT field map stores POSITIONS IN CENTIMETRES (Range bounds
+// and the Data x/y/z alike); the field values are in Tesla. Everything else in
+// this class -- and in Geant4 -- is millimetres, so every coordinate read from
+// the map is converted on the way in. Reading the map as mm shrinks the field
+// region 10x (to +-500 mm instead of +-5000 mm), which silently un-bends any
+// track more than half a metre off axis and destroys its momentum measurement.
+static constexpr double kCmToMm = 10.0;
+
 void ShipFieldMap::placeSample(double x, double y, double z,
                                double bx, double by, double bz) {
     const int ix = (m_dx > 0.0) ? static_cast<int>(std::lround((x - m_xMin) / m_dx)) : 0;
@@ -119,9 +128,10 @@ void ShipFieldMap::loadRootFile(const std::string& file) {
         rangeTree->SetBranchAddress("dz",   &dz);
         rangeTree->GetEntry(0);
 
-        m_xMin = xMin; m_xMax = xMax; m_dx = dx;
-        m_yMin = yMin; m_yMax = yMax; m_dy = dy;
-        m_zMin = zMin; m_zMax = zMax; m_dz = dz;
+        // Map coordinates are in CENTIMETRES -> convert to mm.
+        m_xMin = xMin*kCmToMm; m_xMax = xMax*kCmToMm; m_dx = dx*kCmToMm;
+        m_yMin = yMin*kCmToMm; m_yMax = yMax*kCmToMm; m_dy = dy*kCmToMm;
+        m_zMin = zMin*kCmToMm; m_zMax = zMax*kCmToMm; m_dz = dz*kCmToMm;
 
         m_nX = (m_dx > 0.0) ? static_cast<int>(std::lround((m_xMax - m_xMin) / m_dx)) + 1 : 1;
         m_nY = (m_dy > 0.0) ? static_cast<int>(std::lround((m_yMax - m_yMin) / m_dy)) + 1 : 1;
@@ -137,7 +147,7 @@ void ShipFieldMap::loadRootFile(const std::string& file) {
         const Long64_t nEnt = dataTree->GetEntries();
         for (Long64_t e = 0; e < nEnt; ++e) {
             dataTree->GetEntry(e);
-            xs.insert(x); ys.insert(y); zs.insert(z);
+            xs.insert(x*kCmToMm); ys.insert(y*kCmToMm); zs.insert(z*kCmToMm);
         }
         if (xs.empty()) {
             G4cerr << "[ShipFieldMap] ERROR: 'Data' tree is empty in '" << file << "'\n";
@@ -178,7 +188,7 @@ void ShipFieldMap::loadRootFile(const std::string& file) {
 
     for (Long64_t e = 0; e < nEnt; ++e) {
         dataTree->GetEntry(e);
-        placeSample(x, y, z, bx, by, bz);
+        placeSample(x*kCmToMm, y*kCmToMm, z*kCmToMm, bx, by, bz);  // cm -> mm
     }
     dataTree->ResetBranchAddresses();
 

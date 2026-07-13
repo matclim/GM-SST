@@ -112,33 +112,53 @@ static double stereoSign(int layerID) {
 GeoPhysVol* StrawTrackerBuilder::buildWorld() {
     auto& Mm = MaterialManager::instance();
 
-    // World box sized to contain all 4 stations with generous XY margin to
-    // accommodate the frames and the magnetic field volume (placed between
-    // stations 1 and 2).
-    const double worldX = 2500.0  * GU::mm;   // half-lengths for GeoBox
-    const double worldY = 3500.0  * GU::mm;
-    const double worldZ = 7500.0  * GU::mm;
+    // World (12 x 12 m, SHiP z 0..120 m) contains a single SPECTROMETER volume,
+    // which in turn contains BOTH the four straw stations AND the whole field
+    // map. The field is attached to the spectrometer volume, and the map's own
+    // bounds return B = 0 outside itself -- so inside this volume the field IS
+    // the map, and zero elsewhere.
+    //
+    // Sizing the spectrometer to the map (+-5000 mm in x,y; 20 m in z) means a
+    // station moved outside the mapped region fails LOUDLY in Geant4, instead
+    // of silently reconstructing at the wrong momentum (an undersized 3.5 m
+    // field box against a 15 m map previously cost a 50% momentum bias).
+    const double worldX = kWorldHalfX * GU::mm;   // half-lengths for GeoBox
+    const double worldY = kWorldHalfY * GU::mm;
+    const double worldZ = kWorldHalfZ * GU::mm;
 
     auto* worldBox  = new GeoBox(worldX, worldY, worldZ);
     auto* worldLog  = new GeoLogVol("World", worldBox, Mm.Air());
     auto* worldPhys = new GeoPhysVol(worldLog);
 
-    // World centre in lab frame Z (see README).
-    constexpr double worldZOrigin = 31000.0 * GU::mm;
+    // ---- Spectrometer volume: holds the stations AND the field map ----------
+    auto* specBox  = new GeoBox(kSpecHalfX * GU::mm,
+                                kSpecHalfY * GU::mm,
+                                kSpecHalfZ * GU::mm);
+    auto* specLog  = new GeoLogVol("Spectrometer", specBox, Mm.Air());
+    auto* specPhys = new GeoPhysVol(specLog);
+
+    // world-frame z of the spectrometer centre (= the magnet)
+    const double specZWorld = (kSpecZ - kWorldZOrigin) * GU::mm;
+    worldPhys->add(new GeoNameTag("Spectrometer"));
+    worldPhys->add(new GeoIdentifierTag(0));
+    worldPhys->add(new GeoTransform(GeoTrf::TranslateZ3D(specZWorld)));
+    worldPhys->add(specPhys);
 
     for (int iStation = 0; iStation < kNStations; ++iStation) {
         GeoPhysVol* stationPhys = buildStation(iStation);
 
-        const double zPos = kStationZ[iStation] * GU::mm - worldZOrigin;
+        // Stations are now daughters of the SPECTROMETER, so their placement is
+        // relative to its centre (the magnet), not to the world centre.
+        const double zPos = (kStationZ[iStation] - kSpecZ) * GU::mm;
 
         auto* nameTag = new GeoNameTag("Station_" + std::to_string(iStation));
         auto* idTag   = new GeoIdentifierTag(iStation);
         auto* xf      = new GeoTransform(GeoTrf::TranslateZ3D(zPos));
 
-        worldPhys->add(nameTag);
-        worldPhys->add(idTag);
-        worldPhys->add(xf);
-        worldPhys->add(stationPhys);
+        specPhys->add(nameTag);
+        specPhys->add(idTag);
+        specPhys->add(xf);
+        specPhys->add(stationPhys);
     }
 
     return worldPhys;
@@ -402,10 +422,10 @@ GeoPhysVol* StrawTrackerBuilder::buildStraw(int uid) {
 
 // =============================================================================
 // dumpStrawTable
-// Writes a "Straws" TTree: one row per wire, world frame (lab - worldZOriginMM),
-// matching the frame the hits are recorded in. The reco reads this into
-// ShipStrawGeometry to build one StrawSurface per wire. The placement mirrors
-// buildStation/buildLayer/buildSubLayer and reuses the same constants/helpers.
+// One row per wire, in the WORLD frame (SHiP - kWorldZOrigin), matching the
+// frame the hits are recorded in. The reco reads this into ShipStrawGeometry to
+// build one ACTS StrawSurface per wire. Mirrors buildStation/buildLayer/
+// buildSubLayer and reuses the same constants, so it cannot drift out of sync.
 // =============================================================================
 void StrawTrackerBuilder::dumpStrawTable(const std::string& outFile,
                                          double worldZOriginMM) {
@@ -431,13 +451,13 @@ void StrawTrackerBuilder::dumpStrawTable(const std::string& outFile,
   t.Branch("radius",     &radius);
   t.Branch("halfLength", &halfLength);
 
-  for (int s = 0; s < 4; ++s) {
+  for (int s = 0; s < kNStations; ++s) {
     const double zStation = kStationZ[s] - worldZOriginMM;
     for (int l = 0; l < kNLayers; ++l) {
       const double zLay  = -0.5 * (kNLayers - 1) * layerPitch + l * layerPitch;
       const double alpha = stereoSign(l) * kStereoAngle * M_PI / 180.0;  // rad
       const double ca = std::cos(alpha), sa = std::sin(alpha);
-      for (int sub = 0; sub < 2; ++sub) {
+      for (int sub = 0; sub < kNSubLayers; ++sub) {
         const double zWire    = zStation + zLay + dzSub[sub];
         const double yStagger = (sub == 1) ? kStrawRadius : 0.0;
         for (int i = 0; i < kNStraws; ++i) {
@@ -454,6 +474,7 @@ void StrawTrackerBuilder::dumpStrawTable(const std::string& outFile,
   }
   t.Write();
   std::cout << "[StrawTrackerBuilder] wrote " << t.GetEntries()
-            << " straws to " << outFile << "\n";
+            << " straws to " << outFile
+            << "  (world frame = SHiP - " << worldZOriginMM << " mm)\n";
   f.Close();
 }

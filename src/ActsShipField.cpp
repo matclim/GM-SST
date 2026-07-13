@@ -73,6 +73,12 @@ makeShipFieldFromRootMap(const std::string& rootFile,
   R->SetBranchAddress("yMin",&yMin); R->SetBranchAddress("yMax",&yMax); R->SetBranchAddress("dy",&dy);
   R->SetBranchAddress("zMin",&zMin); R->SetBranchAddress("zMax",&zMax); R->SetBranchAddress("dz",&dz);
   R->GetEntry(0);
+  // UNITS: the map stores POSITIONS IN CENTIMETRES (Range bounds and Data x/y/z);
+  // ACTS works in mm. Scale here, and scale the Data coordinates to match below.
+  constexpr double kCmToMm = 10.0;
+  xMin *= kCmToMm; xMax *= kCmToMm; dx *= kCmToMm;
+  yMin *= kCmToMm; yMax *= kCmToMm; dy *= kCmToMm;
+  zMin *= kCmToMm; zMax *= kCmToMm; dz *= kCmToMm;
   auto nOf=[](double lo,double hi,double d){return d>0?(int)std::lround((hi-lo)/d)+1:1;};
   const int nx=nOf(xMin,xMax,dx), ny=nOf(yMin,yMax,dy), nz=nOf(zMin,zMax,dz);
   const long N=(long)nx*ny*nz;
@@ -84,9 +90,10 @@ makeShipFieldFromRootMap(const std::string& rootFile,
   D->SetBranchAddress("Bx",&bx); D->SetBranchAddress("By",&by); D->SetBranchAddress("Bz",&bz);
   const long nE=D->GetEntries();
   for(long e=0;e<nE;++e){ D->GetEntry(e);
-    int i=(dx>0)?(int)std::lround((x-xMin)/dx):0;
-    int j=(dy>0)?(int)std::lround((y-yMin)/dy):0;
-    int k=(dz>0)?(int)std::lround((z-zMin)/dz):0;
+    const double xm=x*kCmToMm, ym=y*kCmToMm, zm=z*kCmToMm;   // cm -> mm
+    int i=(dx>0)?(int)std::lround((xm-xMin)/dx):0;
+    int j=(dy>0)?(int)std::lround((ym-yMin)/dy):0;
+    int k=(dz>0)?(int)std::lround((zm-zMin)/dz):0;
     if(i<0||i>=nx||j<0||j>=ny||k<0||k>=nz) continue;
     bField[gidx(i,j,k)] = Acts::Vector3(bx,by,bz)*bScaleToTesla; }
 
