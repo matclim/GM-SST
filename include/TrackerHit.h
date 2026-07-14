@@ -26,4 +26,12 @@ struct StrawHit {
     double vpx       {0.};   // TRUTH momentum at production (MeV)
     double vpy       {0.};
     double vpz       {0.};
+
+    // ---- drift-time measurement (see StrawDrift.h) --------------------------
+    // What a real straw actually delivers: the arrival time of the FIRST
+    // primary-ionisation cluster to reach the wire. The reco must invert this
+    // to a radius -- and it gets no sign, so left/right must be resolved by the
+    // fit, not handed over from truth.
+    double driftTime {-1.};  // ns, smeared; < 0 if the hit produced no clusters
+    double driftTrue {-1.};  // mm, TRUE distance of closest approach (diagnostic)
 };

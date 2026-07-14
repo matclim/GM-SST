@@ -30,8 +30,11 @@ std::vector<RawEvent> readEvents(const std::string& rootFile, bool primaryOnly) 
   const bool hasPdg    = T->GetBranch("pdg");       if (hasPdg)    T->SetBranchAddress("pdg",&pdg);
   const bool hasVtx    = T->GetBranch("vtxX");
   if (hasVtx) { T->SetBranchAddress("vtxX",&vx); T->SetBranchAddress("vtxY",&vy); T->SetBranchAddress("vtxZ",&vz); }
-  const bool hasMom = T->GetBranch("vpx");
+  const bool hasMom   = T->GetBranch("vpx");
+  const bool hasDrift = T->GetBranch("driftTime");
   if (hasMom) { T->SetBranchAddress("vpx",&px); T->SetBranchAddress("vpy",&py); T->SetBranchAddress("vpz",&pz); }
+  std::vector<double> *dt=nullptr, *dtr=nullptr;
+  if (hasDrift) { T->SetBranchAddress("driftTime",&dt); T->SetBranchAddress("driftTrue",&dtr); }
 
   std::vector<RawEvent> events;
   const Long64_t n = T->GetEntries(); events.reserve(n);
@@ -49,7 +52,8 @@ std::vector<RawEvent> readEvents(const std::string& rootFile, bool primaryOnly) 
       rh.x=(*x)[h]; rh.y=(*y)[h]; rh.z=(*z)[h];
       rh.xe=(*xe)[h]; rh.ye=(*ye)[h]; rh.ze=(*ze)[h];
       rh.xx=(*xx)[h]; rh.yx=(*yx)[h]; rh.zx=(*zx)[h];
-      if (hasMom) { rh.vpx=(*px)[h]; rh.vpy=(*py)[h]; rh.vpz=(*pz)[h]; }
+      if (hasMom)   { rh.vpx=(*px)[h]; rh.vpy=(*py)[h]; rh.vpz=(*pz)[h]; }
+      if (hasDrift) { rh.driftTime=(*dt)[h]; rh.driftTrue=(*dtr)[h]; }
       if (hasVtx) { rh.vtxX=(*vx)[h]; rh.vtxY=(*vy)[h]; rh.vtxZ=(*vz)[h];
                     if (par == 1) { sx+=rh.vtxX; sy+=rh.vtxY; sz+=rh.vtxZ; ++nsec; } }
       ev.hits.push_back(rh);

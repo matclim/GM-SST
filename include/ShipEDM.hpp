@@ -21,10 +21,18 @@
 namespace shipreco {
 
 /// One 1-D straw-layer measurement: loc0 (mm) with resolution sigma0 (mm).
+/// One straw measurement.
+///
+/// A real straw delivers a DRIFT TIME, which the reco inverts (via the
+/// calibrated r-t relation in StrawDrift.h) into an UNSIGNED radius. It carries
+/// no information about WHICH SIDE of the wire the track passed -- the
+/// left/right ambiguity -- so `radius` is always >= 0, and the sign is resolved
+/// by the FIT (see ShipCalibrator below), never by truth.
 struct Meas {
   Acts::GeometryIdentifier geoId{};
-  double loc0{0.0};
-  double sigma0{0.15};   // straw resolution, mm
+  double radius{0.0};     // UNSIGNED drift radius, mm
+  double sigma0{0.10};    // ~100 um for our 10 mm straws
+  double truthLoc0{0.0};  // SIGNED truth drift: DIAGNOSTICS ONLY, never fitted
 };
 
 using MeasStore = std::vector<Meas>;
@@ -66,7 +74,16 @@ struct ShipCalibrator {
 
     // ACTS-API cluster: allocate a size-1 calibrated measurement and fill it.
     ts.allocateCalibrated(1);
-    ts.template calibrated<1>() = Acts::Vector<1>(m.loc0);
+    // LEFT/RIGHT. The measurement is an UNSIGNED radius (a drift time carries
+    // no side information), but eBoundLoc0 on a line surface is SIGNED. So the
+    // fit must choose the side: take the sign of the PREDICTED loc0, i.e. the
+    // side the track is currently believed to have passed. No truth involved.
+    // It is only as good as the prediction -- which is why ShipTrackFitter
+    // ITERATES: a first pass from a rough seed, then a refit from that result,
+    // by which point the predicted signs are nearly all correct.
+    const double predLoc0 = ts.predicted()[Acts::eBoundLoc0];
+    const double loc0     = (predLoc0 < 0.0 ? -1.0 : +1.0) * m.radius;
+    ts.template calibrated<1>() = Acts::Vector<1>(loc0);
     ts.template calibratedCovariance<1>() =
         Acts::SquareMatrix<1>(m.sigma0 * m.sigma0);
 

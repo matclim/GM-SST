@@ -33,6 +33,10 @@ void TrackerEventAction::setTree(TTree* tree) {
     tree->Branch("vpx",        &m_px);
     tree->Branch("vpy",        &m_py);
     tree->Branch("vpz",        &m_pz);
+    tree->Branch("driftTime",  &m_driftTime);   // ns -- THE measurement
+    tree->Branch("driftTrue",  &m_driftTrue);   // mm -- truth, diagnostic
+    tree->Branch("driftTime",  &m_driftTime);   // ns, THE measurement
+    tree->Branch("driftTrue",  &m_driftTrue);   // mm, truth (diagnostic)
 }
 
 void TrackerEventAction::BeginOfEventAction(const G4Event*) {
@@ -44,6 +48,7 @@ void TrackerEventAction::BeginOfEventAction(const G4Event*) {
     m_xx.clear(); m_yx.clear(); m_zx.clear();
     m_vx.clear(); m_vy.clear(); m_vz.clear();
     m_px.clear(); m_py.clear(); m_pz.clear();
+    m_driftTime.clear(); m_driftTrue.clear();
 }
 
 void TrackerEventAction::EndOfEventAction(const G4Event*) {
@@ -70,6 +75,8 @@ void TrackerEventAction::EndOfEventAction(const G4Event*) {
         m_xx.push_back(h.x_exit);  m_yx.push_back(h.y_exit);  m_zx.push_back(h.z_exit);
         m_vx.push_back(h.vtxX);    m_vy.push_back(h.vtxY);    m_vz.push_back(h.vtxZ);
         m_px.push_back(h.vpx);     m_py.push_back(h.vpy);     m_pz.push_back(h.vpz);
+        m_driftTime.push_back(h.driftTime);
+        m_driftTrue.push_back(h.driftTrue);
     }
 
     m_tree->Fill();

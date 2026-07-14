@@ -4,6 +4,10 @@
 #include <stdexcept>
 
 #include <Acts/Definitions/Algebra.hpp>
+#include <Acts/Definitions/Units.hpp>
+#include <Acts/Material/HomogeneousSurfaceMaterial.hpp>
+#include <Acts/Material/Material.hpp>
+#include <Acts/Material/MaterialSlab.hpp>
 #include <Acts/Surfaces/LineBounds.hpp>
 #include <Acts/Surfaces/StrawSurface.hpp>
 
@@ -11,6 +15,61 @@
 #include <TTree.h>
 
 namespace shipreco {
+
+namespace {
+
+// ---------------------------------------------------------------------------
+// STRAW MATERIAL
+//
+// The sim's straws are a 30 um Mylar wall around ~20 mm of Ar/CO2. A track
+// crossing one traverses TWO walls plus the gas:
+//
+//     Mylar : 2 x 30 um / X0(287 mm)      = 2.09e-4
+//     gas   : ~19.94 mm / X0(~130 m)      = 1.53e-4
+//     TOTAL                                 3.62e-4  per straw
+//
+// ACTS attaches ONE homogeneous slab per surface, so we fold both into a single
+// effective Mylar slab whose radiation-length budget matches exactly:
+//
+//     t_eff = X0(Mylar) x 3.62e-4 = 0.104 mm
+//
+// That reproduces the multiple scattering (which is what drives the angular
+// resolution, and hence the vertex resolution) and approximates the energy loss
+// -- the gas carries little mass, so a Mylar-dominated dE/dx is close enough.
+//
+// Scale: over 32 straws this is x/X0 ~ 1.2%, giving theta0 ~ 243 urad at 5 GeV
+// but only ~20 urad at 60 GeV. So MS matters a great deal for the K_S pions and
+// rather little for the stiff LLP daughters.
+//
+// Caveat: the slab is applied regardless of where the track crosses the straw,
+// whereas the real path through the wall depends on the impact parameter. This
+// is the standard homogeneous approximation; it is an AVERAGE, not exact.
+// ---------------------------------------------------------------------------
+std::shared_ptr<const Acts::ISurfaceMaterial> makeStrawMaterial() {
+  namespace U = Acts::UnitConstants;
+
+  // Mylar (C10H8O4): X0 = 287 mm, lambda_I = 569 mm, <A> = 12.88, <Z> = 6.46,
+  // rho = 1.4 g/cm3.
+  //
+  // ACTS native units are mm and g/mm^3, so the density is
+  //     1.4 g/cm3 = 1.4e-3 g/mm3.
+  // Written out with explicit constants rather than UDLs: getting a density
+  // unit wrong is a silent factor-1000 that no compiler will catch.
+  const float rho = static_cast<float>(1.4e-3 * U::g / (U::mm * U::mm * U::mm));
+
+  const Acts::Material mylar = Acts::Material::fromMassDensity(
+      static_cast<float>(287.0 * U::mm),   // X0
+      static_cast<float>(569.0 * U::mm),   // L0 (nuclear interaction length)
+      12.88f,                              // Ar
+      6.46f,                               // Z
+      rho);
+
+  const float kEffThickness = static_cast<float>(0.104 * U::mm);  // budget above
+  const Acts::MaterialSlab slab(mylar, kEffThickness);
+  return std::make_shared<const Acts::HomogeneousSurfaceMaterial>(slab);
+}
+
+}  // namespace
 
 Acts::GeometryIdentifier ShipStrawGeometry::geoId(int station, int layer,
                                                   int subLayer, int straw) {
@@ -44,6 +103,9 @@ void ShipStrawGeometry::loadTable(const std::string& rootFile) {
   if (t->GetBranch("radius"))     t->SetBranchAddress("radius", &radius);
   if (t->GetBranch("halfLength")) t->SetBranchAddress("halfLength", &halfLength);
 
+  // One shared material object for all 9600 straws.
+  auto strawMaterial = makeStrawMaterial();
+
   const Long64_t n = t->GetEntries();
   m_surfaces.reserve(n);
   for (Long64_t i = 0; i < n; ++i) {
@@ -66,6 +128,11 @@ void ShipStrawGeometry::loadTable(const std::string& rootFile) {
 
     const auto gid = geoId(station, layer, subLayer, straw);
     surf->assignGeometryId(gid);
+    // Without this the Kalman filter treats the tracker as vacuum: it does not
+    // inflate the covariance between measurements, so the fit is over-confident
+    // and mis-weights the hits. KalmanFitterOptions already defaults
+    // multipleScattering = energyLoss = true -- it just had no material to act on.
+    surf->assignSurfaceMaterial(strawMaterial);
     m_byId.emplace(gid, surf.get());
     m_surfaces.push_back(std::move(surf));
   }

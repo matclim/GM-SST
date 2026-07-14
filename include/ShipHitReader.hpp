@@ -18,6 +18,11 @@ struct RawHit {
   double xx{0}, yx{0}, zx{0};    // exit
   double vtxX{0}, vtxY{0}, vtxZ{0};  // truth production (decay) vertex
   double vpx{0}, vpy{0}, vpz{0};     // truth momentum at production (MeV)
+  // THE MEASUREMENT: what the straw actually delivers. Negative means the straw
+  // did not fire (no primary-ionisation clusters) -- a real inefficiency, not a
+  // missing value. driftTrue is the true DOCA: diagnostics only, never fitted.
+  double driftTime{-1};              // ns
+  double driftTrue{-1};              // mm (truth)
 };
 
 struct RawEvent {

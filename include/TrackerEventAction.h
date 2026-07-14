@@ -34,4 +34,8 @@ private:
     std::vector<double> m_xx, m_yx, m_zx;   // exit
     std::vector<double> m_vx, m_vy, m_vz;   // production vertex
     std::vector<double> m_px, m_py, m_pz;   // truth momentum at production
+    // The straw's actual output: a drift time. driftTrue is the TRUE distance
+    // of closest approach, kept for diagnostics only -- the reco never sees it.
+    std::vector<double> m_driftTime;        // ns  (< 0 = no clusters -> no hit)
+    std::vector<double> m_driftTrue;        // mm  (truth)
 };

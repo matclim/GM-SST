@@ -36,6 +36,7 @@
 
 #include "ShipRecoContext.hpp"
 #include "ShipEDM.hpp"
+#include "StrawDrift.h"
 #include "ActsShipField.hpp"
 #include "ShipHitReader.hpp"
 #include "ShipSeeder.hpp"
@@ -289,6 +290,9 @@ int main(int argc, char** argv) {
   htree.Branch("sub",&h_sub);         htree.Branch("straw",&h_straw);
   htree.Branch("z",&h_z);
   htree.Branch("driftMeas",&h_driftMeas);
+  double h_truthLoc0=0; int h_wrongSide=0;
+  htree.Branch("truthLoc0",&h_truthLoc0);   // SIGNED truth drift
+  htree.Branch("wrongSide",&h_wrongSide);   // 1 if the fit chose the wrong side
   htree.Branch("driftTrue",&h_driftTrue);
   htree.Branch("diff",&h_diff);
   htree.Branch("theta",&h_theta);     htree.Branch("pTrue",&h_pTrue);
@@ -443,8 +447,26 @@ int main(int argc, char** argv) {
         const Acts::Vector3 w = line->lineDirection(ctx.gctx);
         auto loc = surf->globalToLocal(ctx.gctx, muonPCA(E,m,C,w), mSign);
         if (!loc.ok()) continue;
-        const double driftMeas = (*loc)[Acts::eBoundLoc0];
-        store.push_back(Meas{gid,driftMeas,measResMm});
+        // THE MEASUREMENT. A real straw gives a drift TIME; we invert it with
+        // the calibrated r-t relation to an UNSIGNED radius. The side (left or
+        // right of the wire) is NOT ours to supply -- the fit resolves it (see
+        // ShipCalibrator). Feeding the chord-derived signed drift, as we used
+        // to, hands the fit a truth-derived answer to the hardest part of the
+        // problem.
+        const double driftTruth = (*loc)[Acts::eBoundLoc0];   // SIGNED, truth
+        // The sim writes one driftTime per STEP; the steps of a straw are
+        // grouped in `hs`, and a straw has one wire and one TDC -- so take the
+        // EARLIEST arrival across them, which is exactly what the TDC records.
+        double tDrift = -1.0;
+        for (const RawHit* rh : hs)
+          if (rh->driftTime >= 0.0 && (tDrift < 0.0 || rh->driftTime < tDrift))
+            tDrift = rh->driftTime;
+        if (tDrift < 0.0) continue;        // straw did not fire (no clusters)
+
+        const double radius = strawdrift::radiusFromTime(tDrift);
+
+        const double driftMeas = radius;   // unsigned, what the reco sees
+        store.push_back(Meas{gid, radius, measResMm, driftTruth});
 
         // ---- DIAGNOSTIC: the same drift, from the TRUTH trajectory ----------
         {
@@ -465,7 +487,8 @@ int main(int argc, char** argv) {
           h_station = hs.front()->stationID; h_layer = hs.front()->layerID;
           h_sub = hs.front()->subLayerID;    h_straw = hs.front()->strawID;
           h_z = C.z();
-          h_driftMeas = driftMeas;
+          h_driftMeas  = driftMeas;
+          h_truthLoc0  = driftTruth;
           h_diff = driftMeas - h_driftTrue;
           h_pathLen = (X - E).norm();
           h_nSteps = static_cast<int>(hs.size());

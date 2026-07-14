@@ -10,13 +10,22 @@
 // The copy numbers set via GeoIdentifierTag map to straw/sub-layer/layer/station IDs.
 
 #include "TrackerSD.h"
+#include "StrawDrift.h"
 #include <cmath>
+#include <random>
 
 #include "G4Step.hh"
 #include "G4Track.hh"
 #include "G4TouchableHistory.hh"
 #include "G4VPhysicalVolume.hh"
 #include "G4SystemOfUnits.hh"
+
+namespace {
+// One RNG per thread. The drift model samples primary-ionisation clusters, so
+// it needs randomness; seeding per-thread keeps MT runs reproducible-ish and
+// avoids a shared-state race.
+thread_local std::mt19937 tl_rng{12345};
+}  // namespace
 
 TrackerSD::TrackerSD(const G4String& name)
     : G4VSensitiveDetector(name)
@@ -64,7 +73,26 @@ G4bool TrackerSD::ProcessHits(G4Step* step, G4TouchableHistory*) {
     const double m0   = trk->GetDefinition()->GetPDGMass();
     const double eKin = trk->GetVertexKineticEnergy();
     const double pMag = std::sqrt(eKin * (eKin + 2.0 * m0));
+    // ---- DRIFT TIME ---------------------------------------------------------
+    // What the straw really measures. Work in the STRAW's local frame, where
+    // the wire is the z-axis, so the distance to the wire is just sqrt(x^2+y^2).
+    // The top transform of the touchable maps global -> that frame.
+    const G4AffineTransform& toLocal =
+        touch->GetHistory()->GetTopTransform();
+    const G4ThreeVector preL  = toLocal.TransformPoint(pre);
+    const G4ThreeVector postL = toLocal.TransformPoint(post);
+
+    const double entryL[3] = {preL.x()/CLHEP::mm,  preL.y()/CLHEP::mm,  preL.z()/CLHEP::mm};
+    const double exitL [3] = {postL.x()/CLHEP::mm, postL.y()/CLHEP::mm, postL.z()/CLHEP::mm};
+
+    const double tDrift = strawdrift::simulateDriftTime(entryL, exitL, tl_rng);
+    const double rTrue  = strawdrift::trueDoca(entryL, exitL);
+
     StrawHit hit;
+    hit.driftTime  = tDrift;    // ns; < 0 means no clusters formed (a real
+                                //     inefficiency -- recorded, not hidden, so
+                                //     the reco can skip it and we can count it)
+    hit.driftTrue  = rTrue;     // mm; TRUTH -- diagnostics only
     hit.trackID    = trk->GetTrackID();
     hit.parentID   = trk->GetParentID();
     hit.pdg        = trk->GetDefinition()->GetPDGEncoding();

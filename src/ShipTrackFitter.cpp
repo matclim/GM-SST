@@ -71,15 +71,48 @@ bool ShipTrackFitter::fit(const Contexts& ctx,
 
   Acts::PropagatorPlainOptions pOpts(ctx.gctx, ctx.mctx);
 
-  Acts::KalmanFitterOptions<Traj> kfOpts(
-      ctx.gctx, ctx.mctx, ctx.cctx, ext, pOpts,
-      /*referenceSurface=*/&start.referenceSurface(),
-      /*multipleScattering=*/true, /*energyLoss=*/true,
-      /*reversedFiltering=*/false);
+  // ---- ITERATED FIT, for the left/right ambiguity --------------------------
+  // The calibrator picks each hit's side from the KF's PREDICTED loc0. On the
+  // first pass those predictions come from a rough seed, so some sides are
+  // wrong -- and a wrong side puts the measurement 2r away from the truth,
+  // which is a far bigger error than the 100 um resolution.
+  //
+  // So we iterate: fit once, then RE-FIT seeded from the first result. By the
+  // second pass the trajectory is close to the truth, the predicted signs are
+  // nearly all correct, and the fit converges on a consistent set of sides.
+  // (This is the standard approach; a CKF would instead branch on both
+  // hypotheses and let the chi2 choose, which is more rigorous and more
+  // expensive.)
+  constexpr int kIterations = 2;
 
-  auto res = m_impl->fitter->fit(sourceLinks.begin(), sourceLinks.end(),
-                                 start, kfOpts, sSequence, tracks);
-  return res.ok();
+  Acts::BoundTrackParameters seed = start;
+  bool ok = false;
+
+  for (int iter = 0; iter < kIterations; ++iter) {
+    tracks.clear();
+
+    Acts::KalmanFitterOptions<Traj> opts(
+        ctx.gctx, ctx.mctx, ctx.cctx, ext, pOpts,
+        /*referenceSurface=*/&seed.referenceSurface(),
+        /*multipleScattering=*/true, /*energyLoss=*/true,
+        /*reversedFiltering=*/false);
+
+    auto res = m_impl->fitter->fit(sourceLinks.begin(), sourceLinks.end(),
+                                   seed, opts, sSequence, tracks);
+    ok = res.ok();
+    if (!ok) break;
+
+    // Seed the next pass from this one. The reference surface is unchanged, so
+    // the parameters are directly reusable.
+    if (iter + 1 < kIterations) {
+      const auto& t = *res;
+      if (!t.hasReferenceSurface()) break;
+      seed = Acts::BoundTrackParameters(t.referenceSurface().getSharedPtr(),
+                                        t.parameters(), t.covariance(),
+                                        start.particleHypothesis());
+    }
+  }
+  return ok;
 }
 
 }  // namespace shipreco
