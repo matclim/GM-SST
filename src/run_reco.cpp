@@ -168,6 +168,11 @@ int main(int argc, char** argv) {
   // momentum) is tested for closest approach to this point -- a displaced-decay
   // discriminant: does the reconstructed decay point back to the target?
   const double ipOriginZ      = std::stod(opt(argc, argv, "--ip-origin-z", "0"));
+  // Mass hypothesis for the invariant mass of the daughters, GeV. A track gives
+  // momentum, not identity, so the invariant mass is always under a hypothesis;
+  // default pion (correct for K0S->pipi and the DP->4pi sample). Override for
+  // other final states (e.g. 0.4937 for a kaon).
+  const double daughterMass   = std::stod(opt(argc, argv, "--daughter-mass", "0.13957"));
   // Effective field integral [T*m]. Re-derive whenever the field map changes:
   //   fire a straight mu-, measure its deflection d at station 3,
   //   theta = d / (z_ST3 - z_magnet),  kBL = p * theta / 0.3.
@@ -283,6 +288,11 @@ int main(int argc, char** argv) {
   vtree.Branch("parentPx",&b_parentPx);      // reconstructed parent momentum [GeV]
   vtree.Branch("parentPy",&b_parentPy);
   vtree.Branch("parentPz",&b_parentPz);
+  // Invariant mass of the fitted daughters under the --daughter-mass hypothesis.
+  // M^2 = (sum E)^2 - |sum p|^2, with E_i = sqrt(p_i^2 + m^2). Works for any
+  // number of tracks >= 2; it is simply the norm of the summed four-momentum.
+  double b_invMass=0;
+  vtree.Branch("invMass",&b_invMass);      // GeV, under the mass hypothesis
   // per-station: HOW MANY truth tracks are in acceptance at each station
   int b_nGeo[4] = {0,0,0,0}, b_nHit[4] = {0,0,0,0};
   vtree.Branch("nGeoAcc0",&b_nGeo[0]); vtree.Branch("nGeoAcc1",&b_nGeo[1]);
@@ -715,6 +725,7 @@ int main(int argc, char** argv) {
       // (no parent line without a fitted vertex, so the IP is undefined)
       b_ipToOrigin = -1.0; b_ipCApZ = 0.0;
       b_parentPx = b_parentPy = b_parentPz = 0.0;
+      b_invMass = 0.0;
       b_tx = tvtx.x(); b_ty = tvtx.y(); b_tz = tvtx.z();
       b_seedRz = b_sdz - b_tz;               // residual: frame-free
       b_vx = b_sdx; b_vy = b_sdy; b_vz = b_sdz;
@@ -765,9 +776,16 @@ int main(int argc, char** argv) {
     // along p_hat; the target O is at (0,0,ipOriginZ) in SHiP = world z minus
     // shipZOrigin. Work in the WORLD frame, where V and the momenta live.
     Acts::Vector3 pSum = Acts::Vector3::Zero();
-    for (const auto& f : fitted)
-      pSum += (f.absoluteMomentum()/Acts::UnitConstants::GeV) * dirOf(f);
+    double eSum = 0.0;                              // total energy, mass hypothesis
+    for (const auto& f : fitted) {
+      const double pGeV = f.absoluteMomentum()/Acts::UnitConstants::GeV;
+      pSum += pGeV * dirOf(f);
+      eSum += std::sqrt(pGeV*pGeV + daughterMass*daughterMass);
+    }
     b_parentPx = pSum.x(); b_parentPy = pSum.y(); b_parentPz = pSum.z();
+    // invariant mass = norm of the summed four-momentum (any N >= 2 tracks)
+    const double m2 = eSum*eSum - pSum.squaredNorm();
+    b_invMass = (m2 > 0.0) ? std::sqrt(m2) : 0.0;
 
     {
       const Acts::Vector3 O(0.0, 0.0, ipOriginZ - shipZOrigin);   // target, world
