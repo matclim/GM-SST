@@ -102,6 +102,39 @@ static Acts::Vector3 multiLineVertex(const std::vector<Acts::Vector3>& P,
   return A.inverse() * b;
 }
 
+// Refine the seed's z by SCANNING along the beam. The least-squares crossing is
+// ill-conditioned in z for forward, near-parallel tracks (seedCond ~ 1e-5), so
+// its z is unreliable and Billoir -- which returns the seed in z -- inherits the
+// error. But the TRANSVERSE positions are well measured, so at each candidate z
+// we extrapolate every track (straight line: p is huge, curvature over the decay
+// volume is negligible) and take the RMS transverse spread of the crossings. The
+// z that minimises that spread is where the tracks actually converge. A
+// well-conditioned 1-D minimisation replacing a near-singular 3-D inversion.
+static double scanVertexZ(const std::vector<Acts::Vector3>& P,
+                          const std::vector<Acts::Vector3>& D,
+                          double zLo, double zHi) {
+  auto spreadAt = [&](double z) -> double {
+    double sx=0, sy=0, sxx=0, syy=0; int n=0;
+    for (std::size_t i = 0; i < P.size(); ++i) {
+      if (std::fabs(D[i].z()) < 1e-9) continue;
+      const double t = (z - P[i].z()) / D[i].z();
+      const double x = P[i].x() + t * D[i].x();
+      const double y = P[i].y() + t * D[i].y();
+      sx+=x; sy+=y; sxx+=x*x; syy+=y*y; ++n;
+    }
+    if (n < 2) return 1e30;
+    return std::sqrt(std::max((sxx/n - (sx/n)*(sx/n)) + (syy/n - (sy/n)*(sy/n)), 0.0));
+  };
+  auto minOn = [&](double lo, double hi, double step) -> double {
+    double bz=lo, bs=1e30;
+    for (double z=lo; z<=hi; z+=step) { double sp=spreadAt(z); if (sp<bs){bs=sp;bz=z;} }
+    return bz;
+  };
+  const double z1 = minOn(zLo, zHi, 1000.0);          // 1 m
+  const double z2 = minOn(z1-1000.0, z1+1000.0, 50.0); // 5 cm
+  return       minOn(z2-50.0, z2+50.0, 2.0);           // 2 mm
+}
+
 int main(int argc, char** argv) {
   const std::string hitsFile  = opt(argc, argv, "--hits", "ks.root");
   const std::string fieldFile = opt(argc, argv, "--field", "");
@@ -130,6 +163,11 @@ int main(int argc, char** argv) {
   // coordinates -- so the output trees are written in SHIP, and only positions
   // are shifted (residuals and covariances are frame-independent).
   const double shipZOrigin    = std::stod(opt(argc, argv, "--ship-z-origin", "60000"));
+  // Target position for the reconstructed-LLP impact parameter, in SHiP z (mm).
+  // Default: SHiP origin (0,0,0). The parent line (vertex + summed daughter
+  // momentum) is tested for closest approach to this point -- a displaced-decay
+  // discriminant: does the reconstructed decay point back to the target?
+  const double ipOriginZ      = std::stod(opt(argc, argv, "--ip-origin-z", "0"));
   // Effective field integral [T*m]. Re-derive whenever the field map changes:
   //   fire a straight mu-, measure its deflection d at station 3,
   //   theta = d / (z_ST3 - z_magnet),  kBL = p * theta / 0.3.
@@ -237,6 +275,14 @@ int main(int argc, char** argv) {
   int b_vtxFail=0, b_nProp=0;
   vtree.Branch("vtxFail",&b_vtxFail);  // 0 ok, 1 <2 tracks, 2 PROPAGATION failed, 3 BILLOIR failed
   vtree.Branch("nProp",&b_nProp);      // tracks that reached the perigee surface
+  // Reconstructed-LLP pointing: parent = sum of fitted daughter momenta; its
+  // line from the vertex is tested against the target at (0,0,ipOriginZ) [SHiP].
+  double b_ipToOrigin=0, b_ipCApZ=0, b_parentPx=0, b_parentPy=0, b_parentPz=0;
+  vtree.Branch("ipToOrigin",&b_ipToOrigin);  // transverse miss to the target [mm]
+  vtree.Branch("ipCApZ",&b_ipCApZ);          // SHiP z of closest approach [mm]
+  vtree.Branch("parentPx",&b_parentPx);      // reconstructed parent momentum [GeV]
+  vtree.Branch("parentPy",&b_parentPy);
+  vtree.Branch("parentPz",&b_parentPz);
   // per-station: HOW MANY truth tracks are in acceptance at each station
   int b_nGeo[4] = {0,0,0,0}, b_nHit[4] = {0,0,0,0};
   vtree.Branch("nGeoAcc0",&b_nGeo[0]); vtree.Branch("nGeoAcc1",&b_nGeo[1]);
@@ -621,6 +667,13 @@ int main(int argc, char** argv) {
     for (const auto& f : fitted) { Pv.push_back(f.position(ctx.gctx)); Dv.push_back(dirOf(f)); }
     double seedCond = 0.0;
     Acts::Vector3 seedPos = multiLineVertex(Pv, Dv, &seedCond);
+    // The LS z is unreliable here; keep its transverse crossing, refine z by the
+    // scan. Bracket by the tracker (kStationZ in WORLD frame) and 60 m upstream.
+    {
+      const double zHi = kStationZ[0] - 200.0;
+      const double zLo = zHi - 60000.0;
+      seedPos.z() = scanVertexZ(Pv, Dv, zLo, zHi);
+    }
 
     // ---- DOCA 1: pairwise track-to-track (vertex consistency) --------------
     double docaMax = 0.0, docaSum = 0.0; int nPair = 0;
@@ -659,6 +712,9 @@ int main(int argc, char** argv) {
 
     if (!ok) {
       // failed fit: fill truth + seed, leave the fitted vertex at the seed
+      // (no parent line without a fitted vertex, so the IP is undefined)
+      b_ipToOrigin = -1.0; b_ipCApZ = 0.0;
+      b_parentPx = b_parentPy = b_parentPz = 0.0;
       b_tx = tvtx.x(); b_ty = tvtx.y(); b_tz = tvtx.z();
       b_seedRz = b_sdz - b_tz;               // residual: frame-free
       b_vx = b_sdx; b_vy = b_sdy; b_vz = b_sdz;
@@ -703,6 +759,30 @@ int main(int argc, char** argv) {
     b_vz  += shipZOrigin;
     b_tz  += shipZOrigin;
     b_sdz += shipZOrigin;
+    // ---- reconstructed-LLP impact parameter to the target -----------------
+    // Parent momentum = vector sum of the fitted daughters (physical: available
+    // in data). The parent trajectory is the line through the fitted vertex V
+    // along p_hat; the target O is at (0,0,ipOriginZ) in SHiP = world z minus
+    // shipZOrigin. Work in the WORLD frame, where V and the momenta live.
+    Acts::Vector3 pSum = Acts::Vector3::Zero();
+    for (const auto& f : fitted)
+      pSum += (f.absoluteMomentum()/Acts::UnitConstants::GeV) * dirOf(f);
+    b_parentPx = pSum.x(); b_parentPy = pSum.y(); b_parentPz = pSum.z();
+
+    {
+      const Acts::Vector3 O(0.0, 0.0, ipOriginZ - shipZOrigin);   // target, world
+      const Acts::Vector3 V = vres->position;                      // vertex, world
+      if (pSum.norm() > 0) {
+        const Acts::Vector3 ph = pSum.normalized();
+        const Acts::Vector3 d  = O - V;
+        b_ipToOrigin = d.cross(ph).norm();                 // transverse miss [mm]
+        const double tCA = d.dot(ph);                      // param to closest approach
+        b_ipCApZ = (V.z() + tCA*ph.z()) + shipZOrigin;     // -> SHiP z
+      } else {
+        b_ipToOrigin = -1.0; b_ipCApZ = 0.0;
+      }
+    }
+
     b_docaMax=docaMax; b_docaMean=docaMean; b_ipMax=ipMax; b_ipMean=ipMean;
     b_nTruthAcc=nTruthAcc; b_nTruthHit=nTruthHit;
     b_nFitted=static_cast<int>(fitted.size());

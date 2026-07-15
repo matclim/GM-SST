@@ -124,7 +124,8 @@ have heavy tails and the bare RMS is outlier-dominated.
 
 - **`Vertices`** — one row per event with ≥ 2 fitted tracks (successes and
   failures both, distinguished by `fitOK`): fitted position, truth, residual,
-  seed, quality (DOCA, impact parameters), and acceptance counts.
+  seed, quality (DOCA, impact parameters), the reconstructed parent's impact
+  parameter to the target (`ipToOrigin`) and its momentum, and acceptance counts.
 - **`Tracks`** — one row per fitted track: fitted vs truth momentum, angles,
   charge, χ², and acceptance flags.
 - **`Hits`** — per-straw diagnostics: the drift measurement vs truth, and the

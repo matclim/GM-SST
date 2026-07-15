@@ -185,6 +185,7 @@ calibrates its r-t from data.
 --reco-out <file>        output trees
 --n <N>                  process only the first N events
 --ship-z-origin <mm>     output-frame offset (60000; positions written in SHiP frame)
+--ip-origin-z <mm>       target z (SHiP) for the reconstructed-parent impact parameter (0)
 --dump-field             print the reco's field and exit
 --verbose-fail <N>       print the first N propagation failures in detail
 ```
@@ -272,13 +273,41 @@ is visible rather than silently absent.
 | truth | `tx ty tz` | true decay vertex (SHiP mm) |
 | residual | `rx ry rz` | fitted − truth |
 | momentum/charge | `p0 p1 q0 q1` | leading two tracks |
-| quality | `docaMax docaMean ipMax ipMean` | vertex consistency |
+| quality | `docaMax docaMean ipMax ipMean` | vertex consistency (see note) |
+| pointing | `ipToOrigin ipCApZ` | reconstructed-parent impact parameter to the target |
+| parent | `parentPx parentPy parentPz` | reconstructed parent momentum (GeV) |
 | seed | `sdx sdy sdz seedRz seedCond` | seed position, its z residual, conditioning |
 | status | `fitOK vtxFail nProp` | success flag; failure mode; tracks reaching the perigee |
 | acceptance | `nTruthAcc nTruthHit nFitted`, `nGeoAcc0-3`, `nHitAcc0-3` | truth-in-acceptance, hit, fitted counts; per-station |
 
 `vtxFail`: 0 = ok, 1 = fewer than 2 tracks, 2 = perigee propagation failed,
 3 = Billoir failed.
+
+**Two different "impact parameters" live in this tree — do not confuse them.**
+
+- **`ipMax` / `ipMean`** measure *vertex quality*. For each track in the vertex,
+  its impact parameter is taken *with respect to the fitted vertex itself* — how
+  far that track passes from the reconstructed decay point. `ipMean` is the
+  average over the tracks (overall consistency); `ipMax` is the worst single
+  track (an outlier catcher: a mis-fit, wrong-side, or mis-associated track shows
+  up here). Small values mean the daughters genuinely converge. Cut on `ipMax`
+  (or `docaMax`) to reject poorly reconstructed vertices.
+
+- **`ipToOrigin`** measures *pointing*, to a different reference. It is the impact
+  parameter of the reconstructed **parent** — the line through the fitted vertex
+  along the summed daughter momentum — to the **target** at (0, 0, `--ip-origin-z`)
+  in the SHiP frame (default the SHiP origin). It answers a physics question, not
+  a quality one: does the reconstructed decay point back to where the parent was
+  produced? A prompt background tends to point back (small `ipToOrigin`); a
+  genuine displaced decay has a characteristic distribution broadened by the
+  direction resolution. `ipCApZ` is the SHiP z of the closest-approach point along
+  the parent line — it tells you *where* the parent points, not just how far it
+  misses. `ipToOrigin = −1` flags an undefined value (failed fit or zero parent
+  momentum); cut `ipToOrigin >= 0` in plots.
+
+  `parentPx/Py/Pz` are the reconstructed parent momentum (the vector sum of the
+  fitted daughters, GeV) — useful in its own right, and the direction that
+  defines the pointing line above.
 
 ### `Tracks` — one row per fitted track
 
@@ -335,6 +364,18 @@ For the LLP → 4π sample: σ_z ≈ 150 mm near the tracker, ~800 mm for the de
 decays. The near-tracker value is close to the geometric limit set by θ_open and
 σ_θ; the far-field width is dominated by L and is largely irreducible for this
 geometry.
+
+**Pointing.** `ipToOrigin` (see the `Vertices` note in §6) is the reconstructed
+parent's impact parameter to the target — a displaced-decay discriminant. Plot it
+against decay z to see how the direction resolution feeds into pointing:
+
+```cpp
+Vertices->Draw("ipToOrigin:tz","fitOK==1 && ipToOrigin>=0","COLZ");
+```
+
+Expect the far decays, whose parent direction is least well measured, to have the
+larger impact parameters — the same σ_θ that widens the vertex funnel also blurs
+the pointing.
 
 **χ²/ndf ≈ 1** indicates the measurement error model is honest — the declared
 `--meas-res` matches the drift model's real spread (~160 µm). A value well below 1
