@@ -117,8 +117,29 @@ between geometric and hit acceptance in the reco output).
 ```
 
 **LLP replay** (`--llp-file <file>`) — reads an external decay sample and fires
-every charged daughter as a primary from the recorded decay vertex. The LLP
-itself is never tracked (it is neutral and has already decayed). The input tree
+every **charged** daughter as a primary from the recorded decay vertex. The LLP
+itself is never tracked (it is neutral and has already decayed).
+
+**Neutral particles.** A straw tracker measures ionisation, so it is blind to
+neutral particles by construction — a neutron, photon, or pi0 does not ionise the
+gas and leaves no hits. The chain reflects this at two stages: the generator does
+not even fire neutral daughters (it skips any daughter with zero PDG charge, since
+they would leave no signal), and the reconstruction's `llp` selection keeps only a
+charged allow-list (pi/K/p/mu/e). So neutrals are neither simulated nor
+reconstructed — there is nothing to reconstruct. This is detector physics, not a
+limitation of the code. Two consequences worth keeping in mind:
+
+- *Invariant mass undershoots for modes with neutrals.* Only the charged daughters
+  enter the summed four-momentum, so if the true final state includes a neutral
+  (e.g. pi+ pi- pi0), the reconstructed `invMass` sits below the true parent mass,
+  with a low-side tail. The pure DP -> 4pi sample is all-charged, so this does not
+  arise there — but any mode with neutrals carries this bias, and it should be
+  modelled. The vertex and pointing are unaffected: they are built from the
+  charged tracks, which still converge at the true decay point.
+- *Neutrals that interact* (a neutron scattering, a photon converting) produce
+  charged secondaries, but those have `parentID != 0` and so are correctly
+  excluded by the `parentID == 0` cut in the `llp` selection — they are not
+  mistaken for LLP daughters. The input tree
 carries the decay vertex (`vtx_x/y/z`, in metres, SHiP frame) and the daughters
 (`d_px/py/pz/E`, in GeV, as vectors), converted m → mm and GeV → MeV on read.
 
@@ -186,6 +207,10 @@ calibrates its r-t from data.
 --n <N>                  process only the first N events
 --ship-z-origin <mm>     output-frame offset (60000; positions written in SHiP frame)
 --ip-origin-z <mm>       target z (SHiP) for the reconstructed-parent impact parameter (0)
+--daughter-mass <GeV>    mass hypothesis for the invariant mass (0.13957 = pion)
+--truth-pid              use each daughter's TRUE pdg for its mass (perfect-PID reference)
+--n-events <N>           process only N events (alias of --n; default all)
+--start-at-event <K>     skip to event index K before processing (default 0)
 --dump-field             print the reco's field and exit
 --verbose-fail <N>       print the first N propagation failures in detail
 ```
@@ -276,6 +301,8 @@ is visible rather than silently absent.
 | quality | `docaMax docaMean ipMax ipMean` | vertex consistency (see note) |
 | pointing | `ipToOrigin ipCApZ` | reconstructed-parent impact parameter to the target |
 | parent | `parentPx parentPy parentPz` | reconstructed parent momentum (GeV) |
+| mass | `invMass` | invariant mass of the daughters (GeV, see note) |
+| weight | `weight` | event weight (from the LLP file; 1 otherwise) |
 | seed | `sdx sdy sdz seedRz seedCond` | seed position, its z residual, conditioning |
 | status | `fitOK vtxFail nProp` | success flag; failure mode; tracks reaching the perigee |
 | acceptance | `nTruthAcc nTruthHit nFitted`, `nGeoAcc0-3`, `nHitAcc0-3` | truth-in-acceptance, hit, fitted counts; per-station |
@@ -413,3 +440,8 @@ left/right side).
   `StrawDrift.h` and update `--meas-res` to the resulting resolution.
 - **Track finding** is not yet combinatorial — the reco groups hits by truth
   track ID. A CKF would be the next step for genuine pattern recognition.
+- **Neutral final-state particles** are invisible to the tracker by construction
+  (no ionisation, no hits) and are neither simulated nor reconstructed. For decay
+  modes containing neutrals, the reconstructed invariant mass is biased low by the
+  missing neutral momentum; this must be modelled per mode. All-charged modes
+  (like DP -> 4pi) are unaffected.

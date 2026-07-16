@@ -114,7 +114,18 @@ root [1] Tracks->Draw("chi2/nMeas")     # should peak near 1
 ```
 
 Always fit the **core** with a Gaussian on a restricted range; the distributions
-have heavy tails and the bare RMS is outlier-dominated.
+have heavy tails and the bare RMS is outlier-dominated. For LLP samples, apply the
+event weight when filling histograms — `Draw("rz","weight*(fitOK==1)")` — since
+each event carries a generator weight; reconstruction itself is weight-blind.
+
+The invariant mass peaks at the parent mass and is a good end-to-end check:
+
+```
+Vertices->Draw("invMass>>h(120,0,2)","weight*(fitOK==1 && nTrk==4)"); h->Fit("gaus")
+```
+
+Use `--truth-pid` to assume perfect particle identification (each daughter's true
+mass) as a reference; the default assumes one mass (`--daughter-mass`, pion).
 
 ---
 
@@ -125,7 +136,8 @@ have heavy tails and the bare RMS is outlier-dominated.
 - **`Vertices`** — one row per event with ≥ 2 fitted tracks (successes and
   failures both, distinguished by `fitOK`): fitted position, truth, residual,
   seed, quality (DOCA, impact parameters), the reconstructed parent's impact
-  parameter to the target (`ipToOrigin`) and its momentum, and acceptance counts.
+  parameter to the target (`ipToOrigin`) and momentum, the daughters' invariant
+  mass (`invMass`), the event `weight`, and acceptance counts.
 - **`Tracks`** — one row per fitted track: fitted vs truth momentum, angles,
   charge, χ², and acceptance flags.
 - **`Hits`** — per-straw diagnostics: the drift measurement vs truth, and the
