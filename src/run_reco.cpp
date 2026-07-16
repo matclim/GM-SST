@@ -307,6 +307,9 @@ int main(int argc, char** argv) {
   vtree.Branch("invMass",&b_invMass);      // GeV, under the mass hypothesis
   double b_weight=1.0;
   vtree.Branch("weight",&b_weight);        // event weight (LLP; 1 otherwise)
+  int b_nBodiesTrue=0, b_nBodiesChargedTrue=0;
+  vtree.Branch("nBodiesTrue",        &b_nBodiesTrue);         // true total daughters
+  vtree.Branch("nBodiesChargedTrue", &b_nBodiesChargedTrue);  // true charged daughters
   // per-station: HOW MANY truth tracks are in acceptance at each station
   int b_nGeo[4] = {0,0,0,0}, b_nHit[4] = {0,0,0,0};
   vtree.Branch("nGeoAcc0",&b_nGeo[0]); vtree.Branch("nGeoAcc1",&b_nGeo[1]);
@@ -468,6 +471,8 @@ int main(int argc, char** argv) {
     // event weight: identical across the event's hits (from the LLP file; 1 for
     // gun/K0S). Read it once so every Vertices row -- success or failure -- carries it.
     b_weight = ev.hits.empty() ? 1.0 : ev.hits.front().weight;
+    b_nBodiesTrue        = ev.nBodiesTrue;
+    b_nBodiesChargedTrue = ev.nBodiesChargedTrue;
     Acts::Vector3 tvtx(ev.truthVtxX, ev.truthVtxY, ev.truthVtxZ);
     if (select == "primary" || select == "llp" || !ev.hasTruthVtx) {
       for (const auto& h : ev.hits)

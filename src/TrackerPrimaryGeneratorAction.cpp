@@ -101,6 +101,7 @@ void TrackerPrimaryGeneratorAction::generateFromLLP(G4Event* event) {
     auto* table = G4ParticleTable::GetParticleTable();
     const std::size_t nd = m_dpdg ? m_dpdg->size() : 0;
     int nCharged = 0;
+    m_nBodiesTrue = static_cast<int>(nd);   // total decay bodies (charged + neutral)
 
     for (std::size_t i = 0; i < nd; ++i) {
         const int pdg = (*m_dpdg)[i];
@@ -121,6 +122,8 @@ void TrackerPrimaryGeneratorAction::generateFromLLP(G4Event* event) {
         vertex->SetPrimary(p);
         ++nCharged;
     }
+
+    m_nBodiesChargedTrue = nCharged;   // charged bodies actually fired
 
     if (nCharged == 0) {
         // Nothing trackable; still add the (empty) vertex so event IDs line up.

@@ -61,4 +61,10 @@ private:
     std::vector<float>  *m_dE {nullptr};
     std::vector<int>    *m_dpdg{nullptr};
     float                m_weight{1.0f};
+    int                  m_nBodiesTrue{0};         // total daughters in the decay
+    int                  m_nBodiesChargedTrue{0};  // charged daughters (fired)
+public:
+    int  nBodiesTrue()        const { return m_nBodiesTrue; }
+    int  nBodiesChargedTrue() const { return m_nBodiesChargedTrue; }
+private:
 };

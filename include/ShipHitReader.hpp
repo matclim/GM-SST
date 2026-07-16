@@ -30,6 +30,8 @@ struct RawEvent {
   std::vector<RawHit> hits;
   bool   hasTruthVtx{false};
   double truthVtxX{0}, truthVtxY{0}, truthVtxZ{0};  // event decay vertex (mean of secondaries)
+  int    nBodiesTrue{0};         // true total decay bodies (0 = not applicable)
+  int    nBodiesChargedTrue{0};  // true charged decay bodies
 };
 
 /// primaryOnly=false keeps ALL tracks (needed for multi-track / vertexing).

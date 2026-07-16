@@ -39,4 +39,6 @@ private:
     std::vector<double> m_driftTime;        // ns  (< 0 = no clusters -> no hit)
     std::vector<double> m_driftTrue;        // mm  (truth)
     std::vector<double> m_weight;           // event weight (LLP; 1 otherwise)
+    int m_nBodiesTrue{0};                   // true total decay bodies (event scalar)
+    int m_nBodiesChargedTrue{0};            // true charged decay bodies (event scalar)
 };

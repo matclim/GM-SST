@@ -1,5 +1,7 @@
 // TrackerEventAction.cpp
 #include "TrackerEventAction.h"
+#include "TrackerPrimaryGeneratorAction.h"
+#include "G4RunManager.hh"
 #include "TrackerSD.h"
 
 #include "G4SDManager.hh"
@@ -35,9 +37,9 @@ void TrackerEventAction::setTree(TTree* tree) {
     tree->Branch("vpz",        &m_pz);
     tree->Branch("driftTime",  &m_driftTime);   // ns -- THE measurement
     tree->Branch("driftTrue",  &m_driftTrue);   // mm -- truth, diagnostic
-    tree->Branch("weight",     &m_weight);       // event weight
-    tree->Branch("driftTime",  &m_driftTime);   // ns, THE measurement
-    tree->Branch("driftTrue",  &m_driftTrue);   // mm, truth (diagnostic)
+    tree->Branch("weight",     &m_weight);
+    tree->Branch("nBodiesTrue",        &m_nBodiesTrue);        // true total daughters
+    tree->Branch("nBodiesChargedTrue", &m_nBodiesChargedTrue); // true charged daughters       // event weight
 }
 
 void TrackerEventAction::BeginOfEventAction(const G4Event*) {
@@ -79,6 +81,16 @@ void TrackerEventAction::EndOfEventAction(const G4Event*) {
         m_driftTime.push_back(h.driftTime);
         m_driftTrue.push_back(h.driftTrue);
         m_weight.push_back(h.weight);
+    }
+
+    // true decay multiplicity from the primary generator (event-level scalars).
+    // Const-cast is safe: we only read. Non-LLP runs (gun/K0S) have no LLP
+    // generator, so the counts stay 0 -- meaning "not applicable".
+    m_nBodiesTrue = 0; m_nBodiesChargedTrue = 0;
+    if (auto* gen = dynamic_cast<const TrackerPrimaryGeneratorAction*>(
+            G4RunManager::GetRunManager()->GetUserPrimaryGeneratorAction())) {
+        m_nBodiesTrue        = gen->nBodiesTrue();
+        m_nBodiesChargedTrue = gen->nBodiesChargedTrue();
     }
 
     m_tree->Fill();

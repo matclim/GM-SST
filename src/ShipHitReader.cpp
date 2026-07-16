@@ -36,6 +36,13 @@ std::vector<RawEvent> readEvents(const std::string& rootFile, bool primaryOnly) 
   if (hasMom) { T->SetBranchAddress("vpx",&px); T->SetBranchAddress("vpy",&py); T->SetBranchAddress("vpz",&pz); }
   std::vector<double> *dt=nullptr, *dtr=nullptr;
   if (hasDrift) { T->SetBranchAddress("driftTime",&dt); T->SetBranchAddress("driftTrue",&dtr); }
+  std::vector<double> *wgt=nullptr;
+  if (hasWeight) T->SetBranchAddress("weight",&wgt);
+  int nBodiesTrue_=0, nBodiesChargedTrue_=0;
+  const bool hasNB  = T->GetBranch("nBodiesTrue");
+  const bool hasNBc = T->GetBranch("nBodiesChargedTrue");
+  if (hasNB)  T->SetBranchAddress("nBodiesTrue",        &nBodiesTrue_);
+  if (hasNBc) T->SetBranchAddress("nBodiesChargedTrue", &nBodiesChargedTrue_);
 
   std::vector<RawEvent> events;
   const Long64_t n = T->GetEntries(); events.reserve(n);
@@ -43,7 +50,24 @@ std::vector<RawEvent> readEvents(const std::string& rootFile, bool primaryOnly) 
     T->GetEntry(e);
     RawEvent ev;
     double sx=0, sy=0, sz=0; int nsec=0;
-    for (std::size_t h = 0; h < stationID->size(); ++h) {
+    // Iterate only over the range all bound vectors share. A file written with a
+    // desynced branch (a missing or doubled push_back in the sim) otherwise makes
+    // (*vec)[h] read past the end and segfault; clamp to the common length so a
+    // ragged file degrades to dropping the ragged tail rather than crashing.
+    std::size_t nh = stationID->size();
+    auto lim = [&](const std::vector<double>* v){ if (v) nh = std::min(nh, v->size()); };
+    auto limI = [&](const std::vector<int>* v){ if (v) nh = std::min(nh, v->size()); };
+    limI(trackID); limI(hasParent?parentID:nullptr); limI(hasPdg?pdg:nullptr);
+    limI(layerID); limI(subLayerID); limI(strawID);
+    lim(x); lim(y); lim(z); lim(xe); lim(ye); lim(ze); lim(xx); lim(yx); lim(zx);
+    if (hasMom)   { lim(px); lim(py); lim(pz); }
+    if (hasDrift) { lim(dt); lim(dtr); }
+    if (hasVtx)   { lim(vx); lim(vy); lim(vz); }
+    if (hasWeight) lim(wgt);
+    if (nh != stationID->size())
+      ::fprintf(stderr, "[ShipHitReader] event %lld: ragged branches, using %zu of %zu hits\n",
+                (long long)e, nh, stationID->size());
+    for (std::size_t h = 0; h < nh; ++h) {
       const int par = hasParent ? (*parentID)[h] : 0;
       if (primaryOnly && (*trackID)[h] != 1) continue;
       RawHit rh;
@@ -55,12 +79,15 @@ std::vector<RawEvent> readEvents(const std::string& rootFile, bool primaryOnly) 
       rh.xx=(*xx)[h]; rh.yx=(*yx)[h]; rh.zx=(*zx)[h];
       if (hasMom)   { rh.vpx=(*px)[h]; rh.vpy=(*py)[h]; rh.vpz=(*pz)[h]; }
       if (hasDrift) { rh.driftTime=(*dt)[h]; rh.driftTrue=(*dtr)[h]; }
+      if (hasWeight) rh.weight=(*wgt)[h];
       if (hasVtx) { rh.vtxX=(*vx)[h]; rh.vtxY=(*vy)[h]; rh.vtxZ=(*vz)[h];
                     if (par == 1) { sx+=rh.vtxX; sy+=rh.vtxY; sz+=rh.vtxZ; ++nsec; } }
       ev.hits.push_back(rh);
     }
     if (hasVtx && nsec > 0) { ev.hasTruthVtx=true;
       ev.truthVtxX=sx/nsec; ev.truthVtxY=sy/nsec; ev.truthVtxZ=sz/nsec; }
+    ev.nBodiesTrue        = nBodiesTrue_;
+    ev.nBodiesChargedTrue = nBodiesChargedTrue_;
     events.push_back(std::move(ev));
   }
   return events;
