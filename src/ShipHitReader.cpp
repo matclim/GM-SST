@@ -31,7 +31,8 @@ std::vector<RawEvent> readEvents(const std::string& rootFile, bool primaryOnly) 
   const bool hasVtx    = T->GetBranch("vtxX");
   if (hasVtx) { T->SetBranchAddress("vtxX",&vx); T->SetBranchAddress("vtxY",&vy); T->SetBranchAddress("vtxZ",&vz); }
   const bool hasMom   = T->GetBranch("vpx");
-  const bool hasDrift = T->GetBranch("driftTime");
+  const bool hasDrift  = T->GetBranch("driftTime");
+  const bool hasWeight = T->GetBranch("weight");
   if (hasMom) { T->SetBranchAddress("vpx",&px); T->SetBranchAddress("vpy",&py); T->SetBranchAddress("vpz",&pz); }
   std::vector<double> *dt=nullptr, *dtr=nullptr;
   if (hasDrift) { T->SetBranchAddress("driftTime",&dt); T->SetBranchAddress("driftTrue",&dtr); }

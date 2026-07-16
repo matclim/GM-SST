@@ -23,6 +23,7 @@ struct RawHit {
   // missing value. driftTrue is the true DOCA: diagnostics only, never fitted.
   double driftTime{-1};              // ns
   double driftTrue{-1};              // mm (truth)
+  double weight{1.0};                // event weight (LLP; 1 otherwise)
 };
 
 struct RawEvent {

@@ -121,17 +121,20 @@ void evdisplay(const char* recoFile = "dpvtx.root",
   vt->SetBranchAddress("vx",&v_vx); vt->SetBranchAddress("vy",&v_vy); vt->SetBranchAddress("vz",&v_vz);
   vt->SetBranchAddress("tx",&v_tx); vt->SetBranchAddress("ty",&v_ty); vt->SetBranchAddress("tz",&v_tz);
   const bool hasParent = vt->GetBranch("parentPx");
+  const bool hasMass   = vt->GetBranch("invMass");
+  double v_invMass=0; if (hasMass) vt->SetBranchAddress("invMass",&v_invMass);
   if (hasParent) {
     vt->SetBranchAddress("parentPx",&v_ppx); vt->SetBranchAddress("parentPy",&v_ppy);
     vt->SetBranchAddress("parentPz",&v_ppz);
   }
 
-  bool found=false; double Vx=0,Vy=0,Vz=0,Tx=0,Ty=0,Tz=0,Ppx=0,Ppy=0,Ppz=0; int nTrk=0;
+  bool found=false; double Vx=0,Vy=0,Vz=0,Tx=0,Ty=0,Tz=0,Ppx=0,Ppy=0,Ppz=0,Mvtx=0; int nTrk=0;
   for (Long64_t i=0;i<vt->GetEntries();++i){ vt->GetEntry(i);
     if (v_event!=event) continue;
     Vx=v_vx; Vy=v_vy; Vz=v_vz;            // tree is already SHiP
     Tx=v_tx; Ty=v_ty; Tz=v_tz;
     if (hasParent){ Ppx=v_ppx; Ppy=v_ppy; Ppz=v_ppz; }
+    Mvtx = hasMass ? v_invMass : 0.0;
     nTrk=v_nTrk; found=(v_fitOK==1); break; }
   if (!found) printf("event %d: no successful vertex (drawing what exists)\n", event);
 
@@ -226,7 +229,8 @@ void evdisplay(const char* recoFile = "dpvtx.root",
 
     if (p==0){
       auto* leg=new TLatex(31000,3050,
-        Form("event %d   n_{trk}=%d   #star fitted vtx   #circ truth vtx", event,nTrk));
+        Form("event %d   n_{trk}=%d   M_{inv}=%.3f GeV   #star fitted vtx   #circ truth vtx",
+             event, nTrk, Mvtx));
       leg->SetTextSize(0.030); leg->Draw();
     }
   }

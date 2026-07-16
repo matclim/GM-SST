@@ -38,4 +38,5 @@ private:
     // of closest approach, kept for diagnostics only -- the reco never sees it.
     std::vector<double> m_driftTime;        // ns  (< 0 = no clusters -> no hit)
     std::vector<double> m_driftTrue;        // mm  (truth)
+    std::vector<double> m_weight;           // event weight (LLP; 1 otherwise)
 };

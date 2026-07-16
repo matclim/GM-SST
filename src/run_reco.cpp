@@ -173,6 +173,12 @@ int main(int argc, char** argv) {
   // default pion (correct for K0S->pipi and the DP->4pi sample). Override for
   // other final states (e.g. 0.4937 for a kaon).
   const double daughterMass   = std::stod(opt(argc, argv, "--daughter-mass", "0.13957"));
+  // --truth-pid: assume PERFECT particle identification. Instead of one mass
+  // hypothesis for every daughter, use each track's TRUE pdg to assign its real
+  // mass, giving the invariant mass you would get with perfect PID. This
+  // isolates the momentum/angle resolution from PID effects. Default off.
+  const bool truthPid = [&]{ for (int i=1;i<argc;++i)
+    if (std::string(argv[i])=="--truth-pid") return true; return false; }();
   // Effective field integral [T*m]. Re-derive whenever the field map changes:
   //   fire a straight mu-, measure its deflection d at station 3,
   //   theta = d / (z_ST3 - z_magnet),  kBL = p * theta / 0.3.
@@ -186,7 +192,13 @@ int main(int argc, char** argv) {
   // chord-derived left/right assignment is what breaks large-angle tracks.
   const bool truthDirMeas     = [&]{ for (int i=1;i<argc;++i)
         if (std::string(argv[i])=="--truth-dir-meas") return true; return false; }();
-  const long   nMax           = std::stol(opt(argc, argv, "--n", "-1"));
+  // event windowing: process [startAt, startAt+nMax) of the loaded events.
+  // --n / --n-events cap the count (default -1 = all); --start-at-event skips
+  // ahead (default 0). Useful for isolating a single problematic event.
+  long nMax = std::stol(opt(argc, argv, "--n", "-1"));
+  { const std::string ne = opt(argc, argv, "--n-events", "");   // alias
+    if (!ne.empty()) nMax = std::stol(ne); }
+  const long startAt = std::stol(opt(argc, argv, "--start-at-event", "0"));
   if (fieldFile.empty()) { std::cerr << "need --field <map.root>\n"; return 1; }
 
   // Seed momentum grid (GeV). Curvature ~ 1/p, so scan logarithmically.
@@ -293,6 +305,8 @@ int main(int argc, char** argv) {
   // number of tracks >= 2; it is simply the norm of the summed four-momentum.
   double b_invMass=0;
   vtree.Branch("invMass",&b_invMass);      // GeV, under the mass hypothesis
+  double b_weight=1.0;
+  vtree.Branch("weight",&b_weight);        // event weight (LLP; 1 otherwise)
   // per-station: HOW MANY truth tracks are in acceptance at each station
   int b_nGeo[4] = {0,0,0,0}, b_nHit[4] = {0,0,0,0};
   vtree.Branch("nGeoAcc0",&b_nGeo[0]); vtree.Branch("nGeoAcc1",&b_nGeo[1]);
@@ -410,9 +424,21 @@ int main(int argc, char** argv) {
     std::array<int,4> a; geoAccPerStation(vtx, p, a);
     return a[0] && a[1] && a[2] && a[3];
   };
-  for (const auto& ev : events) {
-    if (nMax >= 0 && processed >= nMax) break;
-    const int eventId = static_cast<int>(processed); ++processed;
+  const long evTotal = static_cast<long>(events.size());
+  const long evBegin  = std::max(0L, startAt);
+  const long evEnd    = (nMax >= 0) ? std::min(evTotal, evBegin + nMax) : evTotal;
+  std::cout << "processing events [" << evBegin << ", " << evEnd << ") of "
+            << evTotal << "\n";
+  for (long evIdx = evBegin; evIdx < evEnd; ++evIdx) {
+    const auto& ev = events[evIdx];
+    const int eventId = static_cast<int>(evIdx); ++processed;
+    // progress: every 100th event, flushed so the last line before a crash
+    // shows how far we got. (RECO_TRACE gives per-event detail if needed.)
+    if (evIdx % 100 == 0)
+      std::cout << "  ... processing event " << evIdx << " / " << evEnd
+                << std::endl;   // newline + flush: the last line survives a crash
+    if (::getenv("RECO_TRACE"))
+      { std::cerr << "[ev " << eventId << " hits=" << ev.hits.size() << "]\n" << std::flush; }
 
     // group selected hits by trackID
     auto keepHit = [&](const RawHit& h) {
@@ -439,6 +465,9 @@ int main(int argc, char** argv) {
         truthMom[h.trackID] = Acts::Vector3(h.vpx, h.vpy, h.vpz);
     // Truth vertex: for "signal" it's the K_S decay point (mean over daughters);
     // for a primary/gun particle it's that track's own production vertex.
+    // event weight: identical across the event's hits (from the LLP file; 1 for
+    // gun/K0S). Read it once so every Vertices row -- success or failure -- carries it.
+    b_weight = ev.hits.empty() ? 1.0 : ev.hits.front().weight;
     Acts::Vector3 tvtx(ev.truthVtxX, ev.truthVtxY, ev.truthVtxZ);
     if (select == "primary" || select == "llp" || !ev.hasTruthVtx) {
       for (const auto& h : ev.hits)
@@ -464,6 +493,18 @@ int main(int argc, char** argv) {
     if (byTrack.empty()) continue;   // vertexing needs >=2, enforced later
 
     std::vector<Acts::BoundTrackParameters> fitted;   // must outlive vertex fit
+    std::vector<double> fittedMass;   // parallel: true mass (GeV) per fitted track
+    // true rest mass (GeV) from PDG, for the perfect-PID invariant mass
+    auto massOfPdg = [](int pdg) -> double {
+      switch (std::abs(pdg)) {
+        case 211:  return 0.13957;   // pi+-
+        case 321:  return 0.49368;   // K+-
+        case 2212: return 0.93827;   // proton
+        case 13:   return 0.10566;   // mu+-
+        case 11:   return 0.000511;  // e+-
+        default:   return 0.13957;   // fall back to pion
+      }
+    };
 
     for (auto& [tid, ths] : byTrack) {
       // build a per-track RawEvent (seeder + DOCA reuse the same structures)
@@ -659,6 +700,7 @@ int main(int argc, char** argv) {
         ttree.Fill(); ++nKept;
 
         if (pGeV < 0.05) continue;   // only reject degenerate fits
+        fittedMass.push_back(massOfPdg(ths.front()->pdg));   // true mass, for PID mode
         fitted.push_back(std::move(par));
       }
     }
@@ -776,11 +818,13 @@ int main(int argc, char** argv) {
     // along p_hat; the target O is at (0,0,ipOriginZ) in SHiP = world z minus
     // shipZOrigin. Work in the WORLD frame, where V and the momenta live.
     Acts::Vector3 pSum = Acts::Vector3::Zero();
-    double eSum = 0.0;                              // total energy, mass hypothesis
-    for (const auto& f : fitted) {
-      const double pGeV = f.absoluteMomentum()/Acts::UnitConstants::GeV;
-      pSum += pGeV * dirOf(f);
-      eSum += std::sqrt(pGeV*pGeV + daughterMass*daughterMass);
+    double eSum = 0.0;                              // total energy
+    for (std::size_t i = 0; i < fitted.size(); ++i) {
+      const double pGeV = fitted[i].absoluteMomentum()/Acts::UnitConstants::GeV;
+      pSum += pGeV * dirOf(fitted[i]);
+      // perfect-PID: each daughter's TRUE mass; else the single hypothesis
+      const double m = truthPid ? fittedMass[i] : daughterMass;
+      eSum += std::sqrt(pGeV*pGeV + m*m);
     }
     b_parentPx = pSum.x(); b_parentPy = pSum.y(); b_parentPz = pSum.z();
     // invariant mass = norm of the summed four-momentum (any N >= 2 tracks)

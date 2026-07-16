@@ -34,4 +34,5 @@ struct StrawHit {
     // fit, not handed over from truth.
     double driftTime {-1.};  // ns, smeared; < 0 if the hit produced no clusters
     double driftTrue {-1.};  // mm, TRUE distance of closest approach (diagnostic)
+    double weight    {1.};   // event weight (from the LLP file; 1 for gun/K0S)
 };

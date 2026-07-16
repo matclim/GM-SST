@@ -94,6 +94,7 @@ G4bool TrackerSD::ProcessHits(G4Step* step, G4TouchableHistory*) {
                                 //     the reco can skip it and we can count it)
     hit.driftTrue  = rTrue;     // mm; TRUTH -- diagnostics only
     hit.trackID    = trk->GetTrackID();
+    hit.weight     = trk->GetWeight();   // 1.0 unless set by the LLP primary
     hit.parentID   = trk->GetParentID();
     hit.pdg        = trk->GetDefinition()->GetPDGEncoding();
     hit.vtxX       = vtx.x() / mm;
