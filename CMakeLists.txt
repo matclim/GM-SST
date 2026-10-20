@@ -16,7 +16,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
-find_package(Geant4 REQUIRED ui_all vis_all)
+option(WITH_GEANT4_VIS "Build with Geant4 UI/visualization (needs Motif)" OFF)
+if(WITH_GEANT4_VIS)
+  find_package(Geant4 REQUIRED ui_all vis_all)
+  add_compile_definitions(WITH_GEANT4_VIS)
+else()
+  find_package(Geant4 REQUIRED)
+endif()
 find_package(GeoModelCore REQUIRED COMPONENTS GeoModelKernel)
 find_package(GeoModelG4   REQUIRED COMPONENTS GeoModel2G4)
 find_package(ROOT         REQUIRED COMPONENTS Core RIO Tree)
@@ -27,7 +33,13 @@ find_package(GeoModelIO REQUIRED COMPONENTS GeoModelWrite)
 #   <prefix>/lib/cmake/GeoModelCore   ->  three levels up = <prefix>
 get_filename_component(GEOMODEL_PREFIX "${GeoModelCore_DIR}/../../.." ABSOLUTE)
 set(GEOMODEL_INCLUDE_DIR "${GEOMODEL_PREFIX}/include")
-set(GEOMODEL_LIB_DIR     "${GEOMODEL_PREFIX}/lib")
+# GeoModel installs its libraries under lib64 on this platform (EL9), not lib.
+# Prefer lib64 when it exists, else fall back to lib.
+if(EXISTS "${GEOMODEL_PREFIX}/lib64")
+  set(GEOMODEL_LIB_DIR "${GEOMODEL_PREFIX}/lib64")
+else()
+  set(GEOMODEL_LIB_DIR "${GEOMODEL_PREFIX}/lib")
+endif()
 message(STATUS "GeoModel prefix  : ${GEOMODEL_PREFIX}")
 message(STATUS "GeoModel includes: ${GEOMODEL_INCLUDE_DIR}")
 
@@ -91,7 +103,7 @@ target_include_directories(run_StrawTracker
 target_link_libraries(run_StrawTracker
     PRIVATE
         ${Geant4_LIBRARIES}
-        -L${GEOMODEL_LIB_DIR} -lGeoModelKernel -lGeoModel2G4 -lGeoModelWrite -lGeoModelDBManager
+        -L${GEOMODEL_LIB_DIR} -Wl,-rpath-link,${GEOMODEL_LIB_DIR} -Wl,-rpath,${GEOMODEL_LIB_DIR} -lGeoModelKernel -lGeoModel2G4 -lGeoModelWrite -lGeoModelDBManager
         ${ROOT_LIBRARIES}
 )
 
@@ -145,6 +157,7 @@ if(STRAWTRACKER_BUILD_RECO)
         target_include_directories(ship_reco
             PUBLIC
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
+                $<TARGET_PROPERTY:${ACTS_CORE_TARGET},INTERFACE_INCLUDE_DIRECTORIES>
         )
         target_link_libraries(ship_reco
             PUBLIC

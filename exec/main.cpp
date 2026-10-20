@@ -22,12 +22,14 @@
 //                                  fires every charged daughter from the
 //                                  recorded vertex. Overrides the gun.
 //   --gdml-out       <file>        GDML file name                (default: StrawTracker_geometry.gdml)
-
+ 
 #include "TrackerDetectorConstruction.h"
 #include "TrackerActionInitialization.h"
 #include "StrawTrackerBuilder.h"
-
+ 
 #include "G4RunManagerFactory.hh"
+#include "G4RunManager.hh"
+#include "TrackerPrimaryGeneratorAction.h"
 #include "G4UImanager.hh"
 #include "G4VisExecutive.hh"
 #include "G4UIExecutive.hh"
@@ -43,11 +45,11 @@
 #include "CLHEP/Random/RanecuEngine.h"
 #include "TApplication.h"
 #include "TFile.h"
-
+ 
 #include <iostream>
 #include <string>
 #include <stdexcept>
-
+ 
 // ── Config ────────────────────────────────────────────────────────────────────
 struct Config {
     int         nEvents   {0};
@@ -71,7 +73,7 @@ struct Config {
     std::string forceDecay    {""};
     std::string llpFile       {""};
 };
-
+ 
 static Config parseArgs(int argc, char** argv) {
     Config cfg;
     for (int i = 1; i < argc; ++i) {
@@ -111,7 +113,7 @@ static Config parseArgs(int argc, char** argv) {
     }
     return cfg;
 }
-
+ 
 // ── main ──────────────────────────────────────────────────────────────────────
 int main(int argc, char** argv) {
     Config cfg;
@@ -120,31 +122,31 @@ int main(int argc, char** argv) {
         std::cerr << "Argument error: " << e.what() << "\n";
         return 1;
     }
-
+ 
     // Standalone straw-geometry dump (no sim run).
     if (!cfg.dumpStraws.empty()) {
         StrawTrackerBuilder::dumpStrawTable(cfg.dumpStraws);
         return 0;
     }
-
+ 
     // Random seed
     if (cfg.seed != 0) {
         CLHEP::HepRandom::setTheEngine(new CLHEP::RanecuEngine);
         CLHEP::HepRandom::setTheSeed(cfg.seed);
     }
-
+ 
     TApplication rootApp("rootApp", nullptr, nullptr);
     {
         TFile* dummy = TFile::Open("/dev/null", "READ");
         if (dummy) delete dummy;
     }
-
+ 
     // Run manager
     auto* runMgr = G4RunManagerFactory::CreateRunManager(G4RunManagerType::SerialOnly);
     runMgr->SetUserInitialization(
         new TrackerDetectorConstruction(cfg.fieldMap, cfg.frameMaterial));
     runMgr->SetUserInitialization(new FTFP_BERT());
-
+ 
     // Build gun config and pass to action initialisation
     TrackerActionInitialization::GunConfig gunCfg;
     gunCfg.particle  = cfg.particle;
@@ -156,11 +158,24 @@ int main(int argc, char** argv) {
     gunCfg.dirY      = cfg.dirY;
     gunCfg.dirZ      = cfg.dirZ;
     gunCfg.llpFile   = cfg.llpFile;
-
+ 
     runMgr->SetUserInitialization(new TrackerActionInitialization(cfg.outFile, gunCfg));
-
+ 
     runMgr->Initialize();
-
+ 
+    // If --n-events was not given (nEvents<=0) and we are in LLP-replay mode,
+    // default to processing EVERY decay in the input file. Without this the run
+    // manager is asked for 0 events and the simulation exits silently having
+    // produced no output. The generator knows the file's entry count post-Init.
+    if (cfg.nEvents <= 0 && !cfg.llpFile.empty()) {
+        if (auto* gen = dynamic_cast<const TrackerPrimaryGeneratorAction*>(
+                runMgr->GetUserPrimaryGeneratorAction())) {
+            cfg.nEvents = static_cast<int>(gen->llpEntries());
+            std::cout << "[main] --n-events not set; running all "
+                      << cfg.nEvents << " LLP decays from the input file\n";
+        }
+    }
+ 
     // Force K0_S -> pi+ pi- if requested (particles exist post-Initialize()).
     if (cfg.forceDecay == "2cpi") {
         auto* ks = G4ParticleTable::GetParticleTable()->FindParticle("kaon0S");
@@ -173,7 +188,7 @@ int main(int argc, char** argv) {
             std::cerr << "[main] --force-decay: kaon0S not found\n";
         }
     }
-
+ 
     // Export GDML
     if (cfg.writeGDML) {
         G4GDMLParser parser;
@@ -182,25 +197,27 @@ int main(int argc, char** argv) {
                          ->GetNavigatorForTracking()->GetWorldVolume());
         std::cout << "[main] GDML written to " << cfg.gdmlOut << "\n";
     }
-
+ 
     // Visualisation or batch run
     if (cfg.visualize) {
         auto* ui  = new G4UIExecutive(argc, argv);
         auto* vis = new G4VisExecutive();
         vis->Initialize();
-
+ 
         auto* uiMgr = G4UImanager::GetUIpointer();
         uiMgr->ApplyCommand("/control/execute " + cfg.visMacro);
         if (cfg.nEvents > 0)
             uiMgr->ApplyCommand("/run/beamOn " + std::to_string(cfg.nEvents));
-
+ 
         ui->SessionStart();
         delete ui;
         delete vis;
     } else if (cfg.nEvents > 0) {
         runMgr->BeamOn(cfg.nEvents);
     }
-
+ 
     delete runMgr;
     return 0;
 }
+ 
+
