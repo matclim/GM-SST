@@ -19,6 +19,7 @@
 #include <sstream>
 #include <map>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <Acts/Definitions/Algebra.hpp>
@@ -32,6 +33,7 @@
 #include <Acts/Surfaces/Surface.hpp>
 
 #include <TFile.h>
+#include <TNamed.h>
 #include <TTree.h>
 
 #include "ShipRecoContext.hpp"
@@ -135,6 +137,50 @@ static double scanVertexZ(const std::vector<Acts::Vector3>& P,
   return       minOn(z2-50.0, z2+50.0, 2.0);           // 2 mm
 }
 
+// One row of the Tracks tree. Rows are buffered per event and written only
+// after the event's vertex is known, so each track can carry the Vertices entry
+// it belongs to (vtxEntry). The Tracks branches point into one TrackRow.
+struct TrackRow {
+  int    event = 0, pdg = 0, nMeas = 0;
+  double pFit = 0, pTrue = 0, pRes = 0;
+  double phiFit = 0, phiTrue = 0, dphi = 0;
+  double thetaFit = 0, thetaTrue = 0, dtheta = 0, dangle = 0;
+  double qFit = 0, qTrue = 0, chi2 = 0, bestChi2 = 0;
+  int    inAcc = 0;
+  int    geoAcc[4] = {0, 0, 0, 0};
+  int    hitAcc[4] = {0, 0, 0, 0};
+  int    nGeoAcc = 0, nHitAcc = 0;
+};
+
+// True electric charge from a PDG code, for the species the reco tracks.
+// Charged LEPTONS carry the opposite sign to their code (e- = +11, mu- = +13);
+// hadrons the same sign (pi+ = +211, K+ = +321, p = +2212).
+static double chargeOfPdg(int pdg) {
+  const int a = std::abs(pdg);
+  if (a == 11 || a == 13 || a == 15) return (pdg > 0) ? -1.0 : +1.0;
+  return (pdg > 0) ? +1.0 : -1.0;
+}
+
+// Rest mass (GeV) from a PDG code, for the perfect-PID invariant mass.
+static double massOfPdg(int pdg) {
+  switch (std::abs(pdg)) {
+    case 211:  return 0.13957;   // pi+-
+    case 321:  return 0.49368;   // K+-
+    case 2212: return 0.93827;   // proton
+    case 13:   return 0.10566;   // mu+-
+    case 11:   return 0.000511;  // e+-
+    default:   return 0.13957;   // fall back to pion
+  }
+}
+
+// Output format version, written into every reco file (TNamed "RecoFormat").
+//   1  the July 2026 production (no version tag in the file)
+//   2  event set on failed-fit rows; invMass always under --daughter-mass and
+//      invMassTruePID beside it; vertex-track links written by the reco;
+//      qTrue correct for electrons; Hits.diff and Hits.wrongSide redefined;
+//      each tree written once.
+static const char* kRecoFormat = "2";
+
 int main(int argc, char** argv) {
   const std::string hitsFile  = opt(argc, argv, "--hits", "ks.root");
   const std::string fieldFile = opt(argc, argv, "--field", "");
@@ -173,12 +219,16 @@ int main(int argc, char** argv) {
   // default pion (correct for K0S->pipi and the DP->4pi sample). Override for
   // other final states (e.g. 0.4937 for a kaon).
   const double daughterMass   = std::stod(opt(argc, argv, "--daughter-mass", "0.13957"));
-  // --truth-pid: assume PERFECT particle identification. Instead of one mass
-  // hypothesis for every daughter, use each track's TRUE pdg to assign its real
-  // mass, giving the invariant mass you would get with perfect PID. This
-  // isolates the momentum/angle resolution from PID effects. Default off.
+  // --truth-pid is OBSOLETE (format 2). Both masses are now always written:
+  // invMass under the --daughter-mass hypothesis (what a detector without PID
+  // measures) and invMassTruePID with each track's true mass (the perfect-PID
+  // reference). The flag is still accepted so old job scripts keep running, but
+  // it no longer changes what invMass means.
   const bool truthPid = [&]{ for (int i=1;i<argc;++i)
     if (std::string(argv[i])=="--truth-pid") return true; return false; }();
+  if (truthPid)
+    std::cout << "note: --truth-pid is obsolete; invMass uses --daughter-mass "
+                 "and invMassTruePID is written alongside\n";
   // Effective field integral [T*m]. Re-derive whenever the field map changes:
   //   fire a straight mu-, measure its deflection d at station 3,
   //   theta = d / (z_ST3 - z_magnet),  kBL = p * theta / 0.3.
@@ -303,8 +353,8 @@ int main(int argc, char** argv) {
   // Invariant mass of the fitted daughters under the --daughter-mass hypothesis.
   // M^2 = (sum E)^2 - |sum p|^2, with E_i = sqrt(p_i^2 + m^2). Works for any
   // number of tracks >= 2; it is simply the norm of the summed four-momentum.
-  double b_invMass=0;
-  vtree.Branch("invMass",&b_invMass);      // GeV, under the mass hypothesis
+  double b_invMass=0, b_invMassTruePID=0;
+  vtree.Branch("invMass",&b_invMass);      // GeV, under --daughter-mass (no PID)
   double b_weight=1.0;
   vtree.Branch("weight",&b_weight);        // event weight (LLP; 1 otherwise)
   int b_nBodiesTrue=0, b_nBodiesChargedTrue=0;
@@ -316,37 +366,46 @@ int main(int argc, char** argv) {
   vtree.Branch("nGeoAcc2",&b_nGeo[2]); vtree.Branch("nGeoAcc3",&b_nGeo[3]);
   vtree.Branch("nHitAcc0",&b_nHit[0]); vtree.Branch("nHitAcc1",&b_nHit[1]);
   vtree.Branch("nHitAcc2",&b_nHit[2]); vtree.Branch("nHitAcc3",&b_nHit[3]);
+  // ---- format 2 additions (appended, so format-1 readers are unaffected) ----
+  vtree.Branch("invMassTruePID",&b_invMassTruePID);  // GeV, true masses (perfect PID)
+  // Vertex-track links. The tracks listed are those the vertex fit USED (it can
+  // drop a track whose perigee propagation failed); for a failed fit, the tracks
+  // it was given. trkEntry indexes the Tracks tree of this same file.
+  std::vector<int>    b_trkEntry, b_trkPdg, b_trkQ;
+  std::vector<double> b_trkP;
+  int b_nLinked = 0, b_linkMethod = 1;
+  vtree.Branch("trkEntry",&b_trkEntry);
+  vtree.Branch("trkPdg",&b_trkPdg);       // truth PDG of each linked track
+  vtree.Branch("trkQ",&b_trkQ);           // fitted charge
+  vtree.Branch("trkP",&b_trkP);           // fitted momentum [GeV]
+  vtree.Branch("nLinked",&b_nLinked);
+  vtree.Branch("linkMethod",&b_linkMethod);  // always 1: written by the reco, exact
 
   // ---- per-track tree: fitted vs truth (angular + momentum + charge) ------
   TTree ttree("Tracks", "Fitted tracks vs truth");
-  int    t_event=0, t_pdg=0, t_nMeas=0;
-  double t_pFit=0,t_pTrue=0,t_pRes=0;
-  double t_phiFit=0,t_phiTrue=0,t_dphi=0;
-  double t_thetaFit=0,t_thetaTrue=0,t_dtheta=0,t_dangle=0;
-  double t_qFit=0,t_qTrue=0,t_chi2=0;
-  ttree.Branch("event",&t_event);   ttree.Branch("pdg",&t_pdg);
-  ttree.Branch("pFit",&t_pFit);     ttree.Branch("pTrue",&t_pTrue);
-  ttree.Branch("pRes",&t_pRes);
-  ttree.Branch("phiFit",&t_phiFit); ttree.Branch("phiTrue",&t_phiTrue);
-  ttree.Branch("dphi",&t_dphi);
-  ttree.Branch("thetaFit",&t_thetaFit); ttree.Branch("thetaTrue",&t_thetaTrue);
-  ttree.Branch("dtheta",&t_dtheta); ttree.Branch("dangle",&t_dangle);
-  ttree.Branch("qFit",&t_qFit);     ttree.Branch("qTrue",&t_qTrue);
-  ttree.Branch("chi2",&t_chi2);     ttree.Branch("nMeas",&t_nMeas);
-  double t_bestChi2=0;
-  ttree.Branch("bestChi2",&t_bestChi2);
-  int t_inAcc=0;
-  ttree.Branch("inAcc",&t_inAcc);   // truth: crosses ALL 4 stations (geometric)
+  TrackRow tr;   // the row being written
+  ttree.Branch("event",&tr.event);   ttree.Branch("pdg",&tr.pdg);
+  ttree.Branch("pFit",&tr.pFit);     ttree.Branch("pTrue",&tr.pTrue);
+  ttree.Branch("pRes",&tr.pRes);
+  ttree.Branch("phiFit",&tr.phiFit); ttree.Branch("phiTrue",&tr.phiTrue);
+  ttree.Branch("dphi",&tr.dphi);
+  ttree.Branch("thetaFit",&tr.thetaFit); ttree.Branch("thetaTrue",&tr.thetaTrue);
+  ttree.Branch("dtheta",&tr.dtheta); ttree.Branch("dangle",&tr.dangle);
+  ttree.Branch("qFit",&tr.qFit);     ttree.Branch("qTrue",&tr.qTrue);
+  ttree.Branch("chi2",&tr.chi2);     ttree.Branch("nMeas",&tr.nMeas);
+  ttree.Branch("bestChi2",&tr.bestChi2);
+  ttree.Branch("inAcc",&tr.inAcc);   // truth: crosses ALL 4 stations (geometric)
   // per-station acceptance: geometric (straight-line truth) vs actual hits
-  int t_geoAcc[4] = {0,0,0,0};
-  int t_hitAcc[4] = {0,0,0,0};
-  int t_nGeoAcc=0, t_nHitAcc=0;
-  ttree.Branch("geoAcc0",&t_geoAcc[0]); ttree.Branch("geoAcc1",&t_geoAcc[1]);
-  ttree.Branch("geoAcc2",&t_geoAcc[2]); ttree.Branch("geoAcc3",&t_geoAcc[3]);
-  ttree.Branch("hitAcc0",&t_hitAcc[0]); ttree.Branch("hitAcc1",&t_hitAcc[1]);
-  ttree.Branch("hitAcc2",&t_hitAcc[2]); ttree.Branch("hitAcc3",&t_hitAcc[3]);
-  ttree.Branch("nGeoAcc",&t_nGeoAcc);   // 0-4 stations geometrically crossed
-  ttree.Branch("nHitAcc",&t_nHitAcc);   // 0-4 stations actually hit
+  ttree.Branch("geoAcc0",&tr.geoAcc[0]); ttree.Branch("geoAcc1",&tr.geoAcc[1]);
+  ttree.Branch("geoAcc2",&tr.geoAcc[2]); ttree.Branch("geoAcc3",&tr.geoAcc[3]);
+  ttree.Branch("hitAcc0",&tr.hitAcc[0]); ttree.Branch("hitAcc1",&tr.hitAcc[1]);
+  ttree.Branch("hitAcc2",&tr.hitAcc[2]); ttree.Branch("hitAcc3",&tr.hitAcc[3]);
+  ttree.Branch("nGeoAcc",&tr.nGeoAcc);   // 0-4 stations geometrically crossed
+  ttree.Branch("nHitAcc",&tr.nHitAcc);   // 0-4 stations actually hit
+  // ---- format 2 additions -----------------------------------------------
+  int t_vtxEntry = -1, t_linkMethod = 0;
+  ttree.Branch("vtxEntry",&t_vtxEntry);     // Vertices entry of its vertex; -1 if none
+  ttree.Branch("linkMethod",&t_linkMethod); // 1 = linked to vtxEntry, 0 = not linked
 
   // ---- per-STRAW measurement diagnostics (truth-level; not used in the fit) --
   // driftMeas : the signed drift we hand the fit (from the entry->exit chord)
@@ -363,10 +422,16 @@ int main(int argc, char** argv) {
   htree.Branch("sub",&h_sub);         htree.Branch("straw",&h_straw);
   htree.Branch("z",&h_z);
   htree.Branch("driftMeas",&h_driftMeas);
-  double h_truthLoc0=0; int h_wrongSide=0;
+  // wrongSide: the side the fit chose is not known here (Hits are written before
+  // the fit), so it is NOT computed and is always -1. Format 1 declared it but
+  // never set it, so its 0 there carried no information either.
+  double h_truthLoc0=0; int h_wrongSide=-1;
   htree.Branch("truthLoc0",&h_truthLoc0);   // SIGNED truth drift
-  htree.Branch("wrongSide",&h_wrongSide);   // 1 if the fit chose the wrong side
-  htree.Branch("driftTrue",&h_driftTrue);
+  htree.Branch("wrongSide",&h_wrongSide);   // -1: not computed (see above)
+  htree.Branch("driftTrue",&h_driftTrue);   // SIGNED truth DOCA, straight-line swim
+  // diff = driftMeas - |driftTrue|: both are radii now. In format 1 it was
+  // driftMeas - driftTrue, an unsigned radius minus a SIGNED distance, which is
+  // ~2r rather than ~0 for every hit on the negative side of the wire.
   htree.Branch("diff",&h_diff);
   htree.Branch("theta",&h_theta);     htree.Branch("pTrue",&h_pTrue);
   htree.Branch("chordDot",&h_chordDot); // cos(angle) between chord and truth dir
@@ -499,16 +564,37 @@ int main(int argc, char** argv) {
 
     std::vector<Acts::BoundTrackParameters> fitted;   // must outlive vertex fit
     std::vector<double> fittedMass;   // parallel: true mass (GeV) per fitted track
-    // true rest mass (GeV) from PDG, for the perfect-PID invariant mass
-    auto massOfPdg = [](int pdg) -> double {
-      switch (std::abs(pdg)) {
-        case 211:  return 0.13957;   // pi+-
-        case 321:  return 0.49368;   // K+-
-        case 2212: return 0.93827;   // proton
-        case 13:   return 0.10566;   // mu+-
-        case 11:   return 0.000511;  // e+-
-        default:   return 0.13957;   // fall back to pion
+    // Tracks rows of THIS event are buffered and written after the vertex, so
+    // each can carry its Vertices entry. rows[k] lands at Tracks entry trkBase+k.
+    std::vector<TrackRow> rows;
+    std::vector<int> fittedRow;       // parallel to `fitted`: index into rows
+    const Long64_t trkBase = ttree.GetEntries();
+    // Write the buffered rows. `linked` = indices into `fitted` of the tracks
+    // the vertex row at `vtxEntry` lists; every other row gets vtxEntry = -1.
+    auto flushTracks = [&](Long64_t vtxEntry, const std::vector<int>& linked) {
+      std::vector<char> isLinked(rows.size(), 0);
+      if (vtxEntry >= 0)
+        for (int i : linked) isLinked[fittedRow[i]] = 1;
+      for (std::size_t k = 0; k < rows.size(); ++k) {
+        tr = rows[k];
+        t_vtxEntry   = isLinked[k] ? static_cast<int>(vtxEntry) : -1;
+        t_linkMethod = isLinked[k] ? 1 : 0;
+        ttree.Fill();
       }
+      rows.clear();
+    };
+    // Fill the link branches of the vertex row from the chosen fitted tracks.
+    auto setLinks = [&](const std::vector<int>& linked) {
+      b_trkEntry.clear(); b_trkPdg.clear(); b_trkQ.clear(); b_trkP.clear();
+      for (int i : linked) {
+        const TrackRow& r = rows[fittedRow[i]];
+        b_trkEntry.push_back(static_cast<int>(trkBase + fittedRow[i]));
+        b_trkPdg.push_back(r.pdg);
+        b_trkQ.push_back(static_cast<int>(r.qFit));
+        b_trkP.push_back(r.pFit);
+      }
+      b_nLinked = static_cast<int>(linked.size());
+      b_linkMethod = 1;
     };
 
     for (auto& [tid, ths] : byTrack) {
@@ -572,6 +658,10 @@ int main(int argc, char** argv) {
 
         // ---- DIAGNOSTIC: the same drift, from the TRUTH trajectory ----------
         {
+          // reset, so a hit without a truth momentum cannot inherit the
+          // previous hit's values
+          h_driftTrue = h_theta = h_pTrue = h_chordDot =
+              std::numeric_limits<double>::quiet_NaN();
           Acts::Vector3 tp(hs.front()->vpx, hs.front()->vpy, hs.front()->vpz);
           Acts::Vector3 tv(hs.front()->vtxX, hs.front()->vtxY, hs.front()->vtxZ);
           if (tp.norm() > 0) {
@@ -591,7 +681,7 @@ int main(int argc, char** argv) {
           h_z = C.z();
           h_driftMeas  = driftMeas;
           h_truthLoc0  = driftTruth;
-          h_diff = driftMeas - h_driftTrue;
+          h_diff = driftMeas - std::fabs(h_driftTrue);
           h_pathLen = (X - E).norm();
           h_nSteps = static_cast<int>(hs.size());
           htree.Fill();
@@ -675,42 +765,40 @@ int main(int argc, char** argv) {
         const double phiT = std::atan2(dT.y(), dT.x());
         const double thT  = std::acos(std::clamp(dT.z(), -1.0, 1.0));
 
-        t_event = eventId; t_pdg = ths.front()->pdg;
-        t_pFit = pGeV;  t_pTrue = pTrueGeV;
-        t_pRes = (pTrueGeV > 0) ? (pGeV - pTrueGeV) / pTrueGeV : 0.0;
-        t_phiFit = phiF; t_phiTrue = phiT;
-        t_dphi = std::remainder(phiF - phiT, 2.0 * M_PI);
-        t_thetaFit = thF; t_thetaTrue = thT; t_dtheta = thF - thT;
-        t_dangle = std::acos(std::clamp(dF.dot(dT), -1.0, 1.0));   // 3D opening angle
-        t_qFit = (pv[Acts::eBoundQOverP] > 0) ? +1 : -1;
-        // truth charge from PDG (pi+ = +211 -> +1;  mu- = 13 -> -1)
-        {
-          const int pd = ths.front()->pdg;
-          if (std::abs(pd) == 13)       t_qTrue = (pd > 0) ? -1 : +1;   // mu-/mu+
-          else                          t_qTrue = (pd > 0) ? +1 : -1;   // pi+/pi-
-        }
-        t_chi2 = trk.chi2(); t_nMeas = static_cast<int>(trk.nMeasurements());
-        t_bestChi2 = bestChi2;
+        tr.event = eventId; tr.pdg = ths.front()->pdg;
+        tr.pFit = pGeV;  tr.pTrue = pTrueGeV;
+        tr.pRes = (pTrueGeV > 0) ? (pGeV - pTrueGeV) / pTrueGeV : 0.0;
+        tr.phiFit = phiF; tr.phiTrue = phiT;
+        tr.dphi = std::remainder(phiF - phiT, 2.0 * M_PI);
+        tr.thetaFit = thF; tr.thetaTrue = thT; tr.dtheta = thF - thT;
+        tr.dangle = std::acos(std::clamp(dF.dot(dT), -1.0, 1.0));   // 3D opening angle
+        tr.qFit = (pv[Acts::eBoundQOverP] > 0) ? +1 : -1;
+        // truth charge from PDG. Format 1 treated only muons as leptons, so
+        // electrons got the wrong sign.
+        tr.qTrue = chargeOfPdg(ths.front()->pdg);
+        tr.chi2 = trk.chi2(); tr.nMeas = static_cast<int>(trk.nMeasurements());
+        tr.bestChi2 = bestChi2;
         {
           std::array<int,4> ga; geoAccPerStation(tvtx, pT, ga);
           std::array<int,4> ha{0,0,0,0};
           for (const auto* h : ths) if (h->stationID >= 0 && h->stationID < 4) ha[h->stationID] = 1;
-          t_nGeoAcc = 0; t_nHitAcc = 0;
+          tr.nGeoAcc = 0; tr.nHitAcc = 0;
           for (int k = 0; k < 4; ++k) {
-            t_geoAcc[k] = ga[k]; t_hitAcc[k] = ha[k];
-            t_nGeoAcc += ga[k]; t_nHitAcc += ha[k];
+            tr.geoAcc[k] = ga[k]; tr.hitAcc[k] = ha[k];
+            tr.nGeoAcc += ga[k]; tr.nHitAcc += ha[k];
           }
-          t_inAcc = (t_nGeoAcc == 4) ? 1 : 0;
+          tr.inAcc = (tr.nGeoAcc == 4) ? 1 : 0;
         }
-        ttree.Fill(); ++nKept;
+        rows.push_back(tr); ++nKept;    // written after the vertex (flushTracks)
 
         if (pGeV < 0.05) continue;   // only reject degenerate fits
         fittedMass.push_back(massOfPdg(ths.front()->pdg));   // true mass, for PID mode
         fitted.push_back(std::move(par));
+        fittedRow.push_back(static_cast<int>(rows.size()) - 1);
       }
     }
 
-    if (fitted.size() < 2) continue;
+    if (fitted.size() < 2) { flushTracks(-1, {}); continue; }   // no Vertices row
     ++nEvFit2;
 
     // ---- N-track vertex seed: least-squares point closest to all tracks ----
@@ -759,8 +847,17 @@ int main(int argc, char** argv) {
       }
     }
 
+    // Set for EVERY row before the success/failure split. Format 1 set it only
+    // on success, so a failed row repeated the previous row's event number.
+    b_event = eventId;
     b_sdx = seedPos.x(); b_sdy = seedPos.y(); b_sdz = seedPos.z();
     b_seedCond = seedCond;
+    // Tracks the vertex row lists: those the fit used (perigee propagation
+    // succeeded) -- or, with no usable diagnostics, every fitted track.
+    std::vector<int> linked;
+    for (std::size_t i = 0; i < fitted.size(); ++i)
+      if (!vres || vres->propDiag.size() != fitted.size() || vres->propDiag[i].ok)
+        linked.push_back(static_cast<int>(i));
     const bool ok = vres && vres->fail == shipreco::VertexFail::None;
     b_fitOK   = ok ? 1 : 0;
     b_vtxFail = vres ? static_cast<int>(vres->fail) : 1;
@@ -772,7 +869,8 @@ int main(int argc, char** argv) {
       // (no parent line without a fitted vertex, so the IP is undefined)
       b_ipToOrigin = -1.0; b_ipCApZ = 0.0;
       b_parentPx = b_parentPy = b_parentPz = 0.0;
-      b_invMass = 0.0;
+      b_invMass = 0.0; b_invMassTruePID = 0.0;
+      b_sx = b_sy = b_sz = -1.0;             // no fit: no uncertainty (was stale)
       b_tx = tvtx.x(); b_ty = tvtx.y(); b_tz = tvtx.z();
       b_seedRz = b_sdz - b_tz;               // residual: frame-free
       b_vx = b_sdx; b_vy = b_sdy; b_vz = b_sdz;
@@ -789,7 +887,13 @@ int main(int argc, char** argv) {
       b_p1 = (fitted.size()>1) ? fitted[1].absoluteMomentum()/Acts::UnitConstants::GeV : 0.0;
       b_q0 = fitted[0].parameters()[Acts::eBoundQOverP]>0?+1:-1;
       b_q1 = (fitted.size()>1) ? (fitted[1].parameters()[Acts::eBoundQOverP]>0?+1:-1) : 0;
+      // a failed fit used no tracks; list the ones it was given
+      std::vector<int> given(fitted.size());
+      for (std::size_t i = 0; i < given.size(); ++i) given[i] = static_cast<int>(i);
+      setLinks(given);
+      const Long64_t vEntry = vtree.GetEntries();
       vtree.Fill();
+      flushTracks(vEntry, given);
       continue;
     }
 
@@ -822,19 +926,24 @@ int main(int argc, char** argv) {
     // in data). The parent trajectory is the line through the fitted vertex V
     // along p_hat; the target O is at (0,0,ipOriginZ) in SHiP = world z minus
     // shipZOrigin. Work in the WORLD frame, where V and the momenta live.
+    // Parent four-momentum from all fitted daughters of the event. invMass uses
+    // ONE mass hypothesis for every track (--daughter-mass, pion by default):
+    // that is what a detector without particle ID measures. invMassTruePID uses
+    // each track's true mass, as the perfect-PID reference.
     Acts::Vector3 pSum = Acts::Vector3::Zero();
-    double eSum = 0.0;                              // total energy
+    double eSum = 0.0, eSumTrue = 0.0;             // total energy, both hypotheses
     for (std::size_t i = 0; i < fitted.size(); ++i) {
       const double pGeV = fitted[i].absoluteMomentum()/Acts::UnitConstants::GeV;
       pSum += pGeV * dirOf(fitted[i]);
-      // perfect-PID: each daughter's TRUE mass; else the single hypothesis
-      const double m = truthPid ? fittedMass[i] : daughterMass;
-      eSum += std::sqrt(pGeV*pGeV + m*m);
+      eSum     += std::sqrt(pGeV*pGeV + daughterMass*daughterMass);
+      eSumTrue += std::sqrt(pGeV*pGeV + fittedMass[i]*fittedMass[i]);
     }
     b_parentPx = pSum.x(); b_parentPy = pSum.y(); b_parentPz = pSum.z();
     // invariant mass = norm of the summed four-momentum (any N >= 2 tracks)
-    const double m2 = eSum*eSum - pSum.squaredNorm();
-    b_invMass = (m2 > 0.0) ? std::sqrt(m2) : 0.0;
+    const double m2     = eSum*eSum         - pSum.squaredNorm();
+    const double m2True = eSumTrue*eSumTrue - pSum.squaredNorm();
+    b_invMass        = (m2     > 0.0) ? std::sqrt(m2)     : 0.0;
+    b_invMassTruePID = (m2True > 0.0) ? std::sqrt(m2True) : 0.0;
 
     {
       const Acts::Vector3 O(0.0, 0.0, ipOriginZ - shipZOrigin);   // target, world
@@ -857,10 +966,29 @@ int main(int argc, char** argv) {
     b_p1=fitted[1].absoluteMomentum()/Acts::UnitConstants::GeV;
     b_q0=fitted[0].parameters()[Acts::eBoundQOverP]>0?+1:-1;
     b_q1=fitted[1].parameters()[Acts::eBoundQOverP]>0?+1:-1;
+    setLinks(linked);
+    const Long64_t vEntry = vtree.GetEntries();
     vtree.Fill(); ++nVtx; ++nEvVtx;
+    flushTracks(vEntry, linked);
   }
 
-  fout.cd(); vtree.Write(); ttree.Write(); htree.Write(); fout.Close();
+  // Write each tree ONCE. A large tree is auto-saved while it fills, and a plain
+  // Write() then adds a second cycle (format 1 files carry Hits;1 and Hits;2).
+  // kOverwrite replaces the auto-saved cycle instead.
+  fout.cd();
+  vtree.Write("", TObject::kOverwrite);
+  ttree.Write("", TObject::kOverwrite);
+  htree.Write("", TObject::kOverwrite);
+  // Provenance: what made this file. Format 1 files carried none, which is
+  // why matching them to the source that produced them took detective work.
+  {
+    std::string cmd;
+    for (int i = 0; i < argc; ++i) { if (i) cmd += ' '; cmd += argv[i]; }
+    TNamed("RecoFormat", kRecoFormat).Write("", TObject::kOverwrite);
+    TNamed("RecoCommandLine", cmd.c_str()).Write("", TObject::kOverwrite);
+    TNamed("RecoBuild", __DATE__ " " __TIME__).Write("", TObject::kOverwrite);
+  }
+  fout.Close();
   std::cout << "\n=== efficiency breakdown (of " << processed << " events) ===\n"
             << "  >=2 truth pions in acceptance : " << nEvTruth2 << "\n"
             << "  >=2 pions leaving hits        : " << nEvHits2  << "\n"

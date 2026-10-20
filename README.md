@@ -124,8 +124,9 @@ The invariant mass peaks at the parent mass and is a good end-to-end check:
 Vertices->Draw("invMass>>h(120,0,2)","weight*(fitOK==1 && nTrk==4)"); h->Fit("gaus")
 ```
 
-Use `--truth-pid` to assume perfect particle identification (each daughter's true
-mass) as a reference; the default assumes one mass (`--daughter-mass`, pion).
+`invMass` assumes one mass for every daughter (`--daughter-mass`, pion by
+default), as a detector without particle ID would; `invMassTruePID` gives the
+perfect-PID reference with each daughter's true mass. (`--truth-pid` is obsolete.)
 
 ---
 

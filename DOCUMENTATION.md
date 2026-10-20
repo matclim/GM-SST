@@ -207,8 +207,8 @@ calibrates its r-t from data.
 --n <N>                  process only the first N events
 --ship-z-origin <mm>     output-frame offset (60000; positions written in SHiP frame)
 --ip-origin-z <mm>       target z (SHiP) for the reconstructed-parent impact parameter (0)
---daughter-mass <GeV>    mass hypothesis for the invariant mass (0.13957 = pion)
---truth-pid              use each daughter's TRUE pdg for its mass (perfect-PID reference)
+--daughter-mass <GeV>    mass hypothesis for invMass (0.13957 = pion)
+--truth-pid              obsolete since format 2 (accepted, ignored): invMassTruePID is always written
 --n-events <N>           process only N events (alias of --n; default all)
 --start-at-event <K>     skip to event index K before processing (default 0)
 --dump-field             print the reco's field and exit
@@ -283,12 +283,22 @@ Works for any N ≥ 2 tracks:
 ## 6. Output trees
 
 Positions are written in the **SHiP frame**; residuals and covariances are
-frame-independent.
+frame-independent. Lengths are in mm, momenta in GeV, angles in rad.
+
+Every file records how it was made, as `TNamed` objects: `RecoFormat` (the
+output format version, `2` for this description), `RecoCommandLine` (the full
+`run_reco` command) and `RecoBuild` (when the binary was compiled). Files from
+the July 2026 production predate these and are format 1; the differences are
+listed at the end of this section.
 
 ### `Vertices` — one row per event with ≥ 2 fitted tracks
 
 Rows are written for **failures** too (see `fitOK` / `vtxFail`), so inefficiency
-is visible rather than silently absent.
+is visible rather than silently absent. An event has no row at all when fewer
+than two of its tracks were fitted (each needs ≥ 6 measurements, a converged fit
+with χ²/ndf ≤ `--chi2-max`, and p ≥ 0.05 GeV). `event` is the entry number in
+the hits file, which equals the entry number in the generator's LLP file.
+For failed fits the vertex position is the seed and `sx sy sz` are −1.
 
 | group | branches | meaning |
 |---|---|---|
@@ -301,14 +311,28 @@ is visible rather than silently absent.
 | quality | `docaMax docaMean ipMax ipMean` | vertex consistency (see note) |
 | pointing | `ipToOrigin ipCApZ` | reconstructed-parent impact parameter to the target |
 | parent | `parentPx parentPy parentPz` | reconstructed parent momentum (GeV) |
-| mass | `invMass` | invariant mass of the daughters (GeV, see note) |
+| mass | `invMass`, `invMassTruePID` | invariant mass of all fitted daughters (GeV): under `--daughter-mass` for every track (no PID), and with each track's true mass (perfect PID); 0 for failed fits |
 | weight | `weight` | event weight (from the LLP file; 1 otherwise) |
 | seed | `sdx sdy sdz seedRz seedCond` | seed position, its z residual, conditioning |
 | status | `fitOK vtxFail nProp` | success flag; failure mode; tracks reaching the perigee |
 | acceptance | `nTruthAcc nTruthHit nFitted`, `nGeoAcc0-3`, `nHitAcc0-3` | truth-in-acceptance, hit, fitted counts; per-station |
+| links | `trkEntry trkPdg trkQ trkP nLinked linkMethod` | the vertex's tracks: `Tracks` entry numbers, truth PDG, fitted charge and momentum; count; always 1 (exact) |
 
 `vtxFail`: 0 = ok, 1 = fewer than 2 tracks, 2 = perigee propagation failed,
 3 = Billoir failed.
+
+The link branches list the tracks the vertex fit **used**. The fit drops a track
+whose propagation back to the vertex fails, so `nLinked` (= `nTrk`) can be smaller
+than `nFitted`. For a failed fit they list the tracks it was given. The momentum
+sums (`parentP*`, both masses) and `p0 p1 q0 q1` use all fitted tracks.
+
+Acceptance counts are over the true tracks of the selected species that left at
+least one hit (a track that never reached the detector is not counted):
+`nTruthHit` is their number; `nTruthAcc` those whose straight-line extrapolation
+from the true vertex lies inside every station's aperture (|x| ≤ 2000, |y| ≤ 3000
+mm); `nGeoAcc0-3` the same per station; `nHitAcc0-3` those with a hit in that
+station. `weight` is the LLP file's event weight, copied by the simulation (1 for
+gun or K⁰_S runs).
 
 **Two different "impact parameters" live in this tree — do not confuse them.**
 
@@ -346,16 +370,38 @@ is visible rather than silently absent.
 | charge | `qFit qTrue` |
 | fit quality | `chi2 nMeas bestChi2` |
 | acceptance | `inAcc`, `geoAcc0-3`, `hitAcc0-3`, `nGeoAcc`, `nHitAcc` |
+| link | `vtxEntry linkMethod` | `Vertices` entry of the vertex that used this track (−1 if none); 1 if linked, else 0 |
 
 `geoAcc` is whether a straight-line truth track crosses a station's aperture;
 `hitAcc` is whether it actually left hits. The difference is the material loss.
+`inAcc` = all four `geoAcc`. `chi2` is the raw χ² (ndf = `nMeas` − 5);
+`bestChi2` is χ²/ndf of the best of the seed-grid hypotheses, hence biased low.
+`pTrue` and the true angles are taken at production; `qTrue` follows from the
+PDG code (negative for e⁻ and μ⁻). `pdg` is truth, not a detector PID.
 
 ### `Hits` — per-straw diagnostics (truth-level, for debugging)
 
 `event trk station layer sub straw z`, then the measurement diagnostics:
 `driftMeas` (the unsigned radius the fit used), `truthLoc0` (signed truth drift),
-`wrongSide` (1 if the fit chose the wrong side), `driftTrue`, `diff`, `theta`,
-`pTrue`, `chordDot`, `pathLen`, `nSteps`.
+`wrongSide` (not computed: always −1), `driftTrue` (signed truth DOCA of the
+straight-line truth track), `diff` (= `driftMeas` − |`driftTrue`|), `theta` and
+`pTrue` (true direction and momentum at production), `chordDot` (cosine between
+the entry–exit chord and the true direction), `pathLen` (chord length in the
+straw), `nSteps` (Geant4 steps in the straw). `trk` is the Geant4 track ID and `z`
+the wire's z in the **world** frame. Hits are written for every fired straw of
+the selected tracks, including tracks later rejected by the fit.
+
+### Format 1 (July 2026 production) differences
+
+- `event` on failed-fit rows repeats the previous row's value; `sx sy sz` there
+  are stale. Match failed rows to truth by `tx ty tz`.
+- `invMass` used each track's true mass when run with `--truth-pid` (as the
+  production was); there is no `invMassTruePID`.
+- No link branches; no provenance `TNamed`s.
+- `qTrue` has the wrong sign for electrons.
+- `Hits.diff` is `driftMeas − driftTrue` (unsigned minus signed); `wrongSide` is
+  never set (always 0).
+- `Hits` is stored twice (cycles 1 and 2); ROOT reads the latest.
 
 ---
 
@@ -432,9 +478,11 @@ left/right side).
   z-scan minimising transverse spread) were tried and did not improve on the
   least-squares seed, consistent with the constraint being intrinsic rather than
   algorithmic.
-- **Left/right assignment** is resolved from the Kalman prediction. The
-  `wrongSide` branch lets you measure the mis-assignment rate; a full Combinatorial
-  Kalman Filter would instead branch on both hypotheses and let χ² decide.
+- **Left/right assignment** is resolved from the Kalman prediction. Its
+  mis-assignment rate is not yet measured: `wrongSide` would need the fitted side
+  at each straw, which the `Hits` tree (written before the fit) does not have. A
+  full Combinatorial Kalman Filter would instead branch on both hypotheses and let
+  χ² decide.
 - **Drift-model parameters** (cluster density, drift velocity, diffusion) follow
   NA62; if SHiP publishes measured values, re-fit the calibrated r-t in
   `StrawDrift.h` and update `--meas-res` to the resulting resolution.
