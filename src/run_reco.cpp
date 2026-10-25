@@ -150,6 +150,7 @@ struct TrackRow {
   int    geoAcc[4] = {0, 0, 0, 0};
   int    hitAcc[4] = {0, 0, 0, 0};
   int    nGeoAcc = 0, nHitAcc = 0;
+  int    fitHyp = 211;   // |PDG| of the mass hypothesis the fit used
 };
 
 // True electric charge from a PDG code, for the species the reco tracks.
@@ -178,7 +179,9 @@ static double massOfPdg(int pdg) {
 //   2  event set on failed-fit rows; invMass always under --daughter-mass and
 //      invMassTruePID beside it; vertex-track links written by the reco;
 //      qTrue correct for electrons; Hits.diff and Hits.wrongSide redefined;
-//      each tree written once.
+//      each tree written once; track-fit mass hypothesis chosen by --fit-pid
+//      (default: true identity for e and mu, pion for hadrons), recorded per
+//      track in Tracks.fitHyp and per file in the TNamed "RecoFitPID".
 static const char* kRecoFormat = "2";
 
 int main(int argc, char** argv) {
@@ -214,10 +217,24 @@ int main(int argc, char** argv) {
   // momentum) is tested for closest approach to this point -- a displaced-decay
   // discriminant: does the reconstructed decay point back to the target?
   const double ipOriginZ      = std::stod(opt(argc, argv, "--ip-origin-z", "0"));
-  // Mass hypothesis for the invariant mass of the daughters, GeV. A track gives
-  // momentum, not identity, so the invariant mass is always under a hypothesis;
-  // default pion (correct for K0S->pipi and the DP->4pi sample). Override for
-  // other final states (e.g. 0.4937 for a kaon).
+  // PARTICLE IDENTIFICATION ASSUMED BY THE RECO (--fit-pid). It sets the mass
+  // hypothesis of the track fit -- which governs multiple scattering and energy
+  // loss, including the mean bremsstrahlung loss of electrons -- and the masses
+  // used for invMass.
+  //   leptons (default)  e and mu fitted under their TRUE identity, every hadron
+  //                      as a pion. Models SHiP, whose calorimeter and muon
+  //                      system identify leptons but which has no hadron PID.
+  //   pion               every track as a pion (the format-1 behaviour; a muon
+  //                      for --select primary).
+  // The value in effect is written to the output file (TNamed "RecoFitPID"),
+  // and each track's hypothesis to Tracks.fitHyp.
+  const std::string fitPid    = opt(argc, argv, "--fit-pid", "leptons");
+  if (fitPid != "leptons" && fitPid != "pion") {
+    std::cerr << "--fit-pid must be 'leptons' or 'pion' (got '" << fitPid << "')\n";
+    return 1;
+  }
+  // Mass given to every track NOT identified as a lepton, for invMass, GeV.
+  // Default pion. Override for other hadronic final states (e.g. 0.4937, kaon).
   const double daughterMass   = std::stod(opt(argc, argv, "--daughter-mass", "0.13957"));
   // --truth-pid is OBSOLETE (format 2). Both masses are now always written:
   // invMass under the --daughter-mass hypothesis (what a detector without PID
@@ -227,8 +244,19 @@ int main(int argc, char** argv) {
   const bool truthPid = [&]{ for (int i=1;i<argc;++i)
     if (std::string(argv[i])=="--truth-pid") return true; return false; }();
   if (truthPid)
-    std::cout << "note: --truth-pid is obsolete; invMass uses --daughter-mass "
+    std::cout << "note: --truth-pid is obsolete; invMass follows --fit-pid "
                  "and invMassTruePID is written alongside\n";
+  // |PDG| of the mass hypothesis the fit uses for a track of true code `pdg`.
+  auto hypPdgOf = [&](int pdg) -> int {
+    if (fitPid == "pion") return (select == "primary") ? 13 : 211;
+    const int a = std::abs(pdg);
+    return (a == 11 || a == 13) ? a : 211;
+  };
+  auto hypothesisOf = [](int hyp) {
+    if (hyp == 11) return Acts::ParticleHypothesis::electron();
+    if (hyp == 13) return Acts::ParticleHypothesis::muon();
+    return Acts::ParticleHypothesis::pion();
+  };
   // Effective field integral [T*m]. Re-derive whenever the field map changes:
   //   fire a straight mu-, measure its deflection d at station 3,
   //   theta = d / (z_ST3 - z_magnet),  kBL = p * theta / 0.3.
@@ -259,6 +287,7 @@ int main(int argc, char** argv) {
   std::cout << "seed grid:"; for (double v : pSeeds) std::cout << " " << v; 
   std::cout << " GeV   chi2Max=" << chi2Max
             << "   select=" << select
+            << "   fit-pid=" << fitPid
             << (truthDirMeas ? "   [DIAG: truth-dir drift sign]" : "")
             << "\n"
             << "output frame: SHiP  (world z + " << shipZOrigin << " mm)\n";
@@ -354,7 +383,7 @@ int main(int argc, char** argv) {
   // M^2 = (sum E)^2 - |sum p|^2, with E_i = sqrt(p_i^2 + m^2). Works for any
   // number of tracks >= 2; it is simply the norm of the summed four-momentum.
   double b_invMass=0, b_invMassTruePID=0;
-  vtree.Branch("invMass",&b_invMass);      // GeV, under --daughter-mass (no PID)
+  vtree.Branch("invMass",&b_invMass);      // GeV, under the --fit-pid identification
   double b_weight=1.0;
   vtree.Branch("weight",&b_weight);        // event weight (LLP; 1 otherwise)
   int b_nBodiesTrue=0, b_nBodiesChargedTrue=0;
@@ -406,6 +435,7 @@ int main(int argc, char** argv) {
   int t_vtxEntry = -1, t_linkMethod = 0;
   ttree.Branch("vtxEntry",&t_vtxEntry);     // Vertices entry of its vertex; -1 if none
   ttree.Branch("linkMethod",&t_linkMethod); // 1 = linked to vtxEntry, 0 = not linked
+  ttree.Branch("fitHyp",&tr.fitHyp);        // |PDG| of the fit's mass hypothesis
 
   // ---- per-STRAW measurement diagnostics (truth-level; not used in the fit) --
   // driftMeas : the signed drift we hand the fit (from the entry->exit chord)
@@ -564,6 +594,7 @@ int main(int argc, char** argv) {
 
     std::vector<Acts::BoundTrackParameters> fitted;   // must outlive vertex fit
     std::vector<double> fittedMass;   // parallel: true mass (GeV) per fitted track
+    std::vector<double> fittedHypMass;   // parallel: mass used for invMass (GeV)
     // Tracks rows of THIS event are buffered and written after the vertex, so
     // each can carry its Vertices entry. rows[k] lands at Tracks entry trkBase+k.
     std::vector<TrackRow> rows;
@@ -707,6 +738,8 @@ int main(int argc, char** argv) {
                             std::make_shared<Acts::VectorMultiTrajectory>()};
       double bestChi2 = std::numeric_limits<double>::max();
       bool   haveFit  = false;
+      const int  trkHyp = hypPdgOf(ths.front()->pdg);   // see --fit-pid
+      const auto trkPH  = hypothesisOf(trkHyp);
 
       for (double pSeedGeV : pSeeds) {
         for (double qTry : {+1.0, -1.0}) {
@@ -725,10 +758,7 @@ int main(int argc, char** argv) {
           if (covG) (*covG)(Acts::eBoundQOverP, Acts::eBoundQOverP) =
                         std::pow(qopG * 1.0, 2);   // loose prior: let the fit find p
           Acts::BoundTrackParameters seedG(refSurf->getSharedPtr(), pv0,
-                                           covG,
-                                           (select == "primary")
-                                             ? Acts::ParticleHypothesis::muon()
-                                             : Acts::ParticleHypothesis::pion());
+                                           covG, trkPH);
 
           TrackContainer tq{std::make_shared<Acts::VectorTrackContainer>(),
                             std::make_shared<Acts::VectorMultiTrajectory>()};
@@ -778,6 +808,7 @@ int main(int argc, char** argv) {
         tr.qTrue = chargeOfPdg(ths.front()->pdg);
         tr.chi2 = trk.chi2(); tr.nMeas = static_cast<int>(trk.nMeasurements());
         tr.bestChi2 = bestChi2;
+        tr.fitHyp   = trkHyp;
         {
           std::array<int,4> ga; geoAccPerStation(tvtx, pT, ga);
           std::array<int,4> ha{0,0,0,0};
@@ -793,6 +824,8 @@ int main(int argc, char** argv) {
 
         if (pGeV < 0.05) continue;   // only reject degenerate fits
         fittedMass.push_back(massOfPdg(ths.front()->pdg));   // true mass, for PID mode
+        fittedHypMass.push_back((trkHyp == 11 || trkHyp == 13) ? massOfPdg(trkHyp)
+                                                             : daughterMass);
         fitted.push_back(std::move(par));
         fittedRow.push_back(static_cast<int>(rows.size()) - 1);
       }
@@ -927,15 +960,15 @@ int main(int argc, char** argv) {
     // along p_hat; the target O is at (0,0,ipOriginZ) in SHiP = world z minus
     // shipZOrigin. Work in the WORLD frame, where V and the momenta live.
     // Parent four-momentum from all fitted daughters of the event. invMass uses
-    // ONE mass hypothesis for every track (--daughter-mass, pion by default):
-    // that is what a detector without particle ID measures. invMassTruePID uses
+    // the identification the reco assumes (--fit-pid): leptons at their own
+    // mass, every other track at --daughter-mass (pion). invMassTruePID uses
     // each track's true mass, as the perfect-PID reference.
     Acts::Vector3 pSum = Acts::Vector3::Zero();
     double eSum = 0.0, eSumTrue = 0.0;             // total energy, both hypotheses
     for (std::size_t i = 0; i < fitted.size(); ++i) {
       const double pGeV = fitted[i].absoluteMomentum()/Acts::UnitConstants::GeV;
       pSum += pGeV * dirOf(fitted[i]);
-      eSum     += std::sqrt(pGeV*pGeV + daughterMass*daughterMass);
+      eSum     += std::sqrt(pGeV*pGeV + fittedHypMass[i]*fittedHypMass[i]);
       eSumTrue += std::sqrt(pGeV*pGeV + fittedMass[i]*fittedMass[i]);
     }
     b_parentPx = pSum.x(); b_parentPy = pSum.y(); b_parentPz = pSum.z();
@@ -987,6 +1020,7 @@ int main(int argc, char** argv) {
     TNamed("RecoFormat", kRecoFormat).Write("", TObject::kOverwrite);
     TNamed("RecoCommandLine", cmd.c_str()).Write("", TObject::kOverwrite);
     TNamed("RecoBuild", __DATE__ " " __TIME__).Write("", TObject::kOverwrite);
+    TNamed("RecoFitPID", fitPid.c_str()).Write("", TObject::kOverwrite);
   }
   fout.Close();
   std::cout << "\n=== efficiency breakdown (of " << processed << " events) ===\n"

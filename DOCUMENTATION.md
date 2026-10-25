@@ -207,7 +207,8 @@ calibrates its r-t from data.
 --n <N>                  process only the first N events
 --ship-z-origin <mm>     output-frame offset (60000; positions written in SHiP frame)
 --ip-origin-z <mm>       target z (SHiP) for the reconstructed-parent impact parameter (0)
---daughter-mass <GeV>    mass hypothesis for invMass (0.13957 = pion)
+--fit-pid <mode>         identification assumed by the reco (leptons; see below)
+--daughter-mass <GeV>    mass for tracks not identified as leptons, in invMass (0.13957 = pion)
 --truth-pid              obsolete since format 2 (accepted, ignored): invMassTruePID is always written
 --n-events <N>           process only N events (alias of --n; default all)
 --start-at-event <K>     skip to event index K before processing (default 0)
@@ -223,6 +224,22 @@ calibrates its r-t from data.
 | `llp` | `parentID==0` and charged | LLP daughters (fired as primaries) |
 | `primary` | `trackID==1` | single-particle gun |
 | `all` | everything | debugging |
+
+### 5.2b Particle identification (`--fit-pid`)
+
+The track fit needs a mass hypothesis: it sets the multiple scattering and the
+energy loss the Kalman filter expects, including the mean bremsstrahlung loss of
+electrons. The reco does not identify particles, so the hypothesis is an
+assumption, recorded in every file (`TNamed` `RecoFitPID`) and per track
+(`Tracks.fitHyp`):
+
+| mode | electrons, muons | hadrons | models |
+|---|---|---|---|
+| `leptons` (default) | true identity | pion | SHiP: the calorimeter and muon system identify leptons; there is no hadron PID |
+| `pion` | pion | pion | no identification at all (the format-1 behaviour; muon for `--select primary`) |
+
+The same identification sets the masses in `invMass`; `invMassTruePID` always
+uses every track's true mass.
 
 ### 5.3 Geometry and field
 
@@ -311,7 +328,7 @@ For failed fits the vertex position is the seed and `sx sy sz` are −1.
 | quality | `docaMax docaMean ipMax ipMean` | vertex consistency (see note) |
 | pointing | `ipToOrigin ipCApZ` | reconstructed-parent impact parameter to the target |
 | parent | `parentPx parentPy parentPz` | reconstructed parent momentum (GeV) |
-| mass | `invMass`, `invMassTruePID` | invariant mass of all fitted daughters (GeV): under `--daughter-mass` for every track (no PID), and with each track's true mass (perfect PID); 0 for failed fits |
+| mass | `invMass`, `invMassTruePID` | invariant mass of all fitted daughters (GeV): with the identification of `--fit-pid` (leptons at their mass, other tracks at `--daughter-mass`), and with each track's true mass (perfect PID); 0 for failed fits |
 | weight | `weight` | event weight (from the LLP file; 1 otherwise) |
 | seed | `sdx sdy sdz seedRz seedCond` | seed position, its z residual, conditioning |
 | status | `fitOK vtxFail nProp` | success flag; failure mode; tracks reaching the perigee |
@@ -371,6 +388,7 @@ gun or K⁰_S runs).
 | fit quality | `chi2 nMeas bestChi2` |
 | acceptance | `inAcc`, `geoAcc0-3`, `hitAcc0-3`, `nGeoAcc`, `nHitAcc` |
 | link | `vtxEntry linkMethod` | `Vertices` entry of the vertex that used this track (−1 if none); 1 if linked, else 0 |
+| fit | `fitHyp` | \|PDG\| of the mass hypothesis the fit used (11, 13 or 211) |
 
 `geoAcc` is whether a straight-line truth track crosses a station's aperture;
 `hitAcc` is whether it actually left hits. The difference is the material loss.
@@ -398,6 +416,7 @@ the selected tracks, including tracks later rejected by the fit.
 - `invMass` used each track's true mass when run with `--truth-pid` (as the
   production was); there is no `invMassTruePID`.
 - No link branches; no provenance `TNamed`s.
+- Every track was fitted as a pion, electrons and muons included; no `fitHyp`.
 - `qTrue` has the wrong sign for electrons.
 - `Hits.diff` is `driftMeas − driftTrue` (unsigned minus signed); `wrongSide` is
   never set (always 0).

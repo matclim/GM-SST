@@ -124,9 +124,11 @@ The invariant mass peaks at the parent mass and is a good end-to-end check:
 Vertices->Draw("invMass>>h(120,0,2)","weight*(fitOK==1 && nTrk==4)"); h->Fit("gaus")
 ```
 
-`invMass` assumes one mass for every daughter (`--daughter-mass`, pion by
-default), as a detector without particle ID would; `invMassTruePID` gives the
-perfect-PID reference with each daughter's true mass. (`--truth-pid` is obsolete.)
+The reco assumes SHiP-like particle identification (`--fit-pid leptons`, the
+default): electrons and muons are fitted and massed as what they truly are, every
+hadron as a pion. `invMass` uses that identification; `invMassTruePID` gives the
+perfect-PID reference with each daughter's true mass. `--fit-pid pion` treats
+every track as a pion. (`--truth-pid` is obsolete.)
 
 ---
 
